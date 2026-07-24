@@ -2,6 +2,9 @@
 #define KEKE_USERSPACE_H
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
@@ -17,14 +20,27 @@
 
 static inline int keke_cmd_syscall(unsigned int cmd, unsigned long arg, void *out)
 {
-    return syscall(SYS_keke_cmd, cmd, arg, out);
+    long ret = syscall(SYS_keke_cmd, cmd, arg, out);
+    if (ret < 0) {
+        // Don't print for ENOSYS (syscall doesn't exist) - that's expected on stock kernel
+        if (errno != ENOSYS) {
+            fprintf(stderr, "[kekeos] syscall failed: %s (errno=%d)\n", strerror(errno), errno);
+        }
+    }
+    return (int)ret;
 }
 
 static inline int keke_cmd_devctl(unsigned int cmd, void *out)
 {
     int fd = open("/dev/kekeos", O_RDWR);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        fprintf(stderr, "[kekeos] open /dev/kekeos failed: %s (errno=%d)\n", strerror(errno), errno);
+        return -1;
+    }
     int ret = ioctl(fd, cmd, out);
+    if (ret < 0) {
+        fprintf(stderr, "[kekeos] ioctl failed: %s (errno=%d)\n", strerror(errno), errno);
+    }
     close(fd);
     return ret;
 }
