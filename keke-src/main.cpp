@@ -20,31 +20,74 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/fb.h>
+#include <errno.h>
+#include <sys/syscall.h>
+
+// Load a kernel module directly via finit_module() syscall
+// This works without modprobe/insmod — just a raw syscall
+static int loadKernelModule(const char* path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    
+    // finit_module(fd, params, flags) — flags=0 means strict version check
+    int ret = syscall(SYS_finit_module, fd, "", 0);
+    int saved_errno = errno;
+    close(fd);
+    
+    if (ret < 0) {
+        errno = saved_errno;
+        return -1;
+    }
+    return 0;
+}
 
 // Framebuffer class for direct graphics rendering
 class Framebuffer {
 private:
     int fb_fd;
     unsigned char* fb_mem;
+    unsigned char* backbuffer;
     struct fb_var_screeninfo vinfo;
     struct fb_fix_screeninfo finfo;
     long screensize;
     int width, height, bpp;
     
 public:
-    Framebuffer() : fb_fd(-1), fb_mem(nullptr), screensize(0), width(0), height(0), bpp(0) {}
+    Framebuffer() : fb_fd(-1), fb_mem(nullptr), backbuffer(nullptr), screensize(0), width(0), height(0), bpp(0) {}
     
     bool init() {
+        // First try opening /dev/fb0 directly
         fb_fd = open("/dev/fb0", O_RDWR);
-    if (fb_fd < 0) {
-        // Tohle ti vypíše srozumitelnou chybu do terminálu
-        std::cerr << "[DEBUG] Failed to open /dev/fb0. Error code (" << errno 
-                  << "): " << std::strerror(errno) << std::endl;
-        return false;
-    }
-        // Open framebuffer device
-        fb_fd = open("/dev/fb0", O_RDWR);
+        
+        // If /dev/fb0 doesn't exist, try loading the Bochs DRM driver
+        // QEMU's default -vga std emulates a Bochs VBE card
+        if (fb_fd < 0 && errno == ENOENT) {
+            std::cout << "\033[33m[FB] /dev/fb0 not found, loading bochs-drm module...\033[0m\n";
+            
+            int ret = loadKernelModule("/lib/modules/bochs.ko");
+            if (ret == 0) {
+                std::cout << "\033[32m[FB] bochs-drm module loaded\033[0m\n";
+                // Wait for /dev/fb0 to appear
+                for (int i = 0; i < 20; i++) {
+                    usleep(100000); // 100ms
+                    fb_fd = open("/dev/fb0", O_RDWR);
+                    if (fb_fd >= 0) break;
+                }
+            } else if (ret < 0 && errno == EEXIST) {
+                std::cout << "\033[32m[FB] bochs-drm module already loaded\033[0m\n";
+                for (int i = 0; i < 20; i++) {
+                    usleep(100000);
+                    fb_fd = open("/dev/fb0", O_RDWR);
+                    if (fb_fd >= 0) break;
+                }
+            } else {
+                std::cout << "\033[31m[FB] Failed to load bochs-drm module (errno=" << errno << ")\033[0m\n";
+            }
+        }
+        
         if (fb_fd < 0) {
+            std::cerr << "[DEBUG] Failed to open /dev/fb0. Error code (" << errno
+                      << "): " << std::strerror(errno) << std::endl;
             return false;
         }
         
@@ -72,10 +115,41 @@ public:
             return false;
         }
         
+        // Allocate backbuffer for double-buffered rendering
+        backbuffer = new unsigned char[screensize];
+        if (backbuffer) {
+            // Initialize backbuffer with black
+            memset(backbuffer, 0, screensize);
+        }
+        
         return true;
     }
     
+    // Swap backbuffer to screen (single memcpy = no tearing)
+    void swapBuffers() {
+        if (backbuffer && fb_mem) {
+            memcpy(fb_mem, backbuffer, screensize);
+        }
+    }
+    
+    // Swap only a region from backbuffer to screen (for cursor-only updates)
+    void swapBuffersRegion(int x, int y, int w, int h) {
+        if (!backbuffer || !fb_mem) return;
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > width) w = width - x;
+        if (y + h > height) h = height - y;
+        if (w <= 0 || h <= 0) return;
+        int bpp_bytes = bpp / 8;
+        for (int row = 0; row < h; row++) {
+            int offset = (y + row) * finfo.line_length + x * bpp_bytes;
+            memcpy(fb_mem + offset, backbuffer + offset, w * bpp_bytes);
+        }
+    }
+    
     void close() {
+        delete[] backbuffer;
+        backbuffer = nullptr;
         if (fb_mem != nullptr && fb_mem != MAP_FAILED) {
             munmap(fb_mem, screensize);
         }
@@ -89,25 +163,28 @@ public:
     int getWidth() const { return width; }
     int getHeight() const { return height; }
     int getBpp() const { return bpp; }
+    int getLineLength() const { return finfo.line_length; }
+    unsigned char* getBackbuffer() const { return backbuffer; }
     
-    // Set pixel at (x, y) with RGB color
+    // Set pixel at (x, y) with RGB color — writes to backbuffer
     void setPixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
         if (x < 0 || x >= width || y < 0 || y >= height) return;
+        if (!backbuffer) return;
         
         long location = (x + vinfo.xoffset) * (bpp / 8) + (y + vinfo.yoffset) * finfo.line_length;
         
         if (bpp == 32) {
-            fb_mem[location] = b;
-            fb_mem[location + 1] = g;
-            fb_mem[location + 2] = r;
-            fb_mem[location + 3] = 0; // Alpha
+            backbuffer[location] = b;
+            backbuffer[location + 1] = g;
+            backbuffer[location + 2] = r;
+            backbuffer[location + 3] = 0; // Alpha
         } else if (bpp == 24) {
-            fb_mem[location] = b;
-            fb_mem[location + 1] = g;
-            fb_mem[location + 2] = r;
+            backbuffer[location] = b;
+            backbuffer[location + 1] = g;
+            backbuffer[location + 2] = r;
         } else if (bpp == 16) {
             unsigned short color = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            *((unsigned short*)(fb_mem + location)) = color;
+            *((unsigned short*)(backbuffer + location)) = color;
         }
     }
     
@@ -211,15 +288,22 @@ public:
             {0x7F,0x63,0x31,0x18,0x4C,0x66,0x7F,0x00}, // Z (90)
         };
         
-        int char_index = c - 32;
-        if (char_index < 0 || char_index >= 59) {
+        // Map lowercase to uppercase (a-z → A-Z)
+        unsigned char uc = (unsigned char)c;
+        if (uc >= 'a' && uc <= 'z') {
+            uc = uc - 32; // Convert to uppercase
+        }
+        
+        // Check valid range: chars 32 (space) through 90 (Z) → indices 0-58
+        int char_index = uc - 32;
+        if (char_index < 0 || char_index > 58) {
             char_index = 0; // Default to space for unknown chars
         }
         
         for (int row = 0; row < 8; row++) {
             unsigned char font_row = font[char_index][row];
             for (int col = 0; col < 8; col++) {
-                if (font_row & (0x80 >> col)) {
+                if (font_row & (1 << (7 - col))) {
                     setPixel(x + col, y + row, r, g, b);
                 }
             }
@@ -233,6 +317,9 @@ public:
         }
     }
 };
+
+// Include the Keke GUI framework (Windows XP Luna style)
+#include "gui.hpp"
 
 // ANSI Color Codes - following kernel.c VGA color scheme
 namespace Colors {
@@ -278,6 +365,7 @@ private:
     std::string current_dir;
     std::string current_text_color;
     std::string current_bg_color;
+    int cursor_style; // 0 = arrow, 1 = cat paw
     std::vector<std::string> command_history;
     int history_count;
     int history_index;
@@ -1036,7 +1124,7 @@ private:
         }
     }
     
-    // Test framebuffer graphics
+    // Launch the Windows XP-style GUI
     void cmdGui() {
         Framebuffer fb;
         if (!fb.init()) {
@@ -1045,25 +1133,35 @@ private:
         }
         
         std::cout << Colors::GREEN << "Framebuffer inicializován: " << fb.getWidth() << "x" << fb.getHeight() << " @ " << fb.getBpp() << "bpp" << Colors::RESET << "\n";
-        std::cout << Colors::YELLOW << "Kreslení testovacího obrazu..." << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "Spouštím Keke GUI... (ESC pro návrat do shellu)" << Colors::RESET << "\n";
         
-        // Clear screen to blue
-        fb.clear(0, 0, 50);
+        // Restore terminal to canonical mode for GUI input
+        struct termios oldt, newt;
+        tcgetattr(STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~(ICANON | ECHO);
+        newt.c_cc[VMIN] = 0;
+        newt.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
         
-        // Draw some shapes
-        fb.drawRect(100, 100, 200, 150, 255, 255, 255); // White rectangle
-        fb.drawRect(150, 150, 100, 100, 255, 0, 0); // Red square
-        fb.drawLine(50, 50, 300, 300, 0, 255, 0); // Green line
+        // Launch the GUI
+        {
+            GuiManager gui(&fb, fb.getWidth(), fb.getHeight(), cursor_style);
+            gui.run();
+        }
         
-        // Draw text
-        fb.drawString(50, 400, "KekeOS Graphics", 255, 255, 0);
-        fb.drawString(50, 420, "Framebuffer Test", 255, 255, 255);
+        // Restore terminal settings
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
         
-        std::cout << Colors::GREEN << "Hotovo. Stiskněte Enter pro návrat do shellu..." << Colors::RESET << "\n";
-        std::cin.get();
+        // Drain any leftover escape sequence bytes from stdin
+        tcflush(STDIN_FILENO, TCIFLUSH);
+        
+        // Clear terminal screen after GUI exit
+        std::cout << "\033[2J\033[H";
+        std::cout.flush();
         
         fb.close();
-        std::cout << Colors::GREEN << "Framebuffer uzavřen" << Colors::RESET << "\n";
+        std::cout << Colors::GREEN << "GUI ukončen, návrat do shellu" << Colors::RESET << "\n";
     }
     
     // Add command to history
@@ -1082,6 +1180,98 @@ private:
         }
         
         history_index = -1;
+    }
+    
+    // Read a line of input with raw terminal mode, supporting arrow key history
+    std::string readLine() {
+        if (!isatty(STDIN_FILENO)) {
+            std::string input;
+            std::getline(std::cin, input);
+            return input;
+        }
+        
+        struct termios oldt, newt;
+        tcgetattr(STDIN_FILENO, &oldt);
+        newt = oldt;
+        newt.c_lflag &= ~(ICANON | ECHO);
+        newt.c_cc[VMIN] = 1;
+        newt.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+        
+        std::string line;
+        int hist_pos = -1;
+        std::string saved_input;
+        
+        auto clearDisplay = [&](const std::string& s) {
+            for (size_t i = 0; i < s.length(); i++) std::cout << "\b \b";
+            std::cout.flush();
+        };
+        
+        while (true) {
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) != 1) break;
+            
+            if (ch == '\n' || ch == '\r') {
+                std::cout << std::endl;
+                break;
+            }
+            else if (ch == 127 || ch == 8) {
+                if (!line.empty()) {
+                    line.pop_back();
+                    std::cout << "\b \b";
+                    std::cout.flush();
+                }
+            }
+            else if (ch == 3) {
+                clearDisplay(line);
+                line.clear();
+                std::cout << std::endl;
+                break;
+            }
+            else if (ch == 27) {
+                char seq[2];
+                if (read(STDIN_FILENO, seq, 2) == 2 && seq[0] == '[') {
+                    if (seq[1] == 'A' && history_count > 0 && hist_pos < history_count - 1) {
+                        if (hist_pos == -1) saved_input = line;
+                        hist_pos++;
+                        clearDisplay(line);
+                        line = command_history[hist_pos];
+                        std::cout << line;
+                        std::cout.flush();
+                    }
+                    else if (seq[1] == 'B') {
+                        if (hist_pos > 0) {
+                            hist_pos--;
+                            clearDisplay(line);
+                            line = command_history[hist_pos];
+                            std::cout << line;
+                            std::cout.flush();
+                        }
+                        else if (hist_pos == 0) {
+                            hist_pos = -1;
+                            clearDisplay(line);
+                            line = saved_input;
+                            std::cout << line;
+                            std::cout.flush();
+                        }
+                    }
+                }
+            }
+            else if (ch >= 32 && ch < 127) {
+                if (hist_pos != -1) {
+                    clearDisplay(line);
+                    line.clear();
+                    hist_pos = -1;
+                    saved_input.clear();
+                }
+                line += ch;
+                std::cout << ch;
+                std::cout.flush();
+            }
+        }
+        
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        return line;
     }
     
     // Execute external command using fork/exec
@@ -1157,7 +1347,9 @@ private:
             
             if (strcmp_custom(password.c_str(), correctPassword) == 0) {
                 std::cout << Colors::BRIGHT_GREEN << "\n[ ACCESS GRANTED ] Welcome back, keke!\n\n" << Colors::RESET;
+                std::cout.flush();
                 accessGranted = true;
+                sleep(3);
                 
                 // Clear password from memory
                 password.clear();
@@ -1175,7 +1367,7 @@ private:
     }
 
 public:
-    KekeShell() : current_dir("/mnt"), current_text_color(Colors::WHITE), current_bg_color(""), history_count(0), history_index(-1) {
+    KekeShell() : current_dir("/mnt"), current_text_color(Colors::WHITE), current_bg_color(""), cursor_style(0), history_count(0), history_index(-1) {
         command_history.reserve(HISTORY_SIZE);
     }
     
@@ -1204,18 +1396,7 @@ public:
             while (shellRunning) {
                 printPrompt();
                 
-                std::string input;
-                if (!std::getline(std::cin, input)) {
-                    shellRunning = false;
-                    break;
-                }
-                
-                // Handle arrow keys - detect ANSI escape sequence (27, 91, X)
-                // If input starts with 27 (ESC), it's likely an arrow key sequence
-                if (!input.empty() && input[0] == 27) {
-                    // Arrow key detected, discard the input
-                    continue;
-                }
+                std::string input = readLine();
                 
                 // Skip empty input
                 if (input.empty()) continue;
@@ -1230,7 +1411,7 @@ public:
                 
                 // Built-in commands from kernel.c
                 if (strcmp_custom(cmd.c_str(), "help") == 0) {
-                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, kpm, gui, color, origin, windows");
+                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, kpm, gui, color, cursor, origin, windows");
                 }
                 else if (strcmp_custom(cmd.c_str(), "ver") == 0) {
                     std::cout << Colors::CYAN << "--------------------------------------------\n";
@@ -1280,6 +1461,23 @@ public:
                 }
                 else if (strcmp_custom(cmd.c_str(), "gui") == 0) {
                     cmdGui();
+                }
+                else if (strcmp_custom(cmd.c_str(), "cursor") == 0) {
+                    if (arg.empty()) {
+                        std::cout << Colors::YELLOW << "Použití: cursor <arrow|paw>" << Colors::RESET << "\n";
+                        std::cout << Colors::YELLOW << "Aktuální styl: " << (cursor_style == 0 ? "arrow" : "paw") << Colors::RESET << "\n";
+                    }
+                    else if (strcmp_custom(arg.c_str(), "arrow") == 0) {
+                        cursor_style = 0;
+                        printSuccess("Kurzor nastaven na šipku (arrow).");
+                    }
+                    else if (strcmp_custom(arg.c_str(), "paw") == 0) {
+                        cursor_style = 1;
+                        printSuccess("Kurzor nastaven na kočičí tlapičku (cat paw).");
+                    }
+                    else {
+                        printError("Neznámý styl! Použijte 'cursor arrow' nebo 'cursor paw'.");
+                    }
                 }
                 else if (cmd[0] == '.' && cmd[1] == '/') {
                     // File execution: ./filename
@@ -1381,38 +1579,56 @@ public:
 };
 
 int main() {
-    // Create /dev directory for device nodes
+    // Mount devtmpfs to auto-populate /dev with device nodes
+    // This creates /dev/fb0, /dev/sda, /dev/tty*, etc. automatically
     mkdir("/dev", 0755);
-    
-    // Create /dev/sda device node (SCSI/SATA hard drive)
-    // Major: 8, Minor: 0 for sda
-    dev_t dev = makedev(8, 0);
-    if (mknod("/dev/sda", S_IFBLK | 0660, dev) != 0) {
-        std::cout << Colors::RED << "[WARNING] Failed to create /dev/sda device node" << Colors::RESET << "\n";
+    if (mount("devtmpfs", "/dev", "devtmpfs", 0, nullptr) == 0) {
+        std::cout << Colors::GREEN << "[OK] Mounted devtmpfs on /dev" << Colors::RESET << "\n";
     } else {
-        std::cout << Colors::GREEN << "[OK] Created /dev/sda device node" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "[WARNING] Could not mount devtmpfs, falling back to manual device nodes" << Colors::RESET << "\n";
+        dev_t dev = makedev(8, 0);
+        if (mknod("/dev/sda", S_IFBLK | 0660, dev) != 0) {
+            std::cout << Colors::RED << "[WARNING] Failed to create /dev/sda device node" << Colors::RESET << "\n";
+        } else {
+            std::cout << Colors::GREEN << "[OK] Created /dev/sda device node" << Colors::RESET << "\n";
+        }
+        dev_t dev1 = makedev(8, 1);
+        if (mknod("/dev/sda1", S_IFBLK | 0660, dev1) != 0) {
+            std::cout << Colors::RED << "[WARNING] Failed to create /dev/sda1 device node" << Colors::RESET << "\n";
+        } else {
+            std::cout << Colors::GREEN << "[OK] Created /dev/sda1 device node" << Colors::RESET << "\n";
+        }
+    }
+
+    // Load PS/2 mouse module (CONFIG_MOUSE_PS2=m, not built-in)
+    // This must happen after devtmpfs so /dev/input/mice gets created
+    if (loadKernelModule("/lib/modules/psmouse.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] Loaded psmouse module (mouse support)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] Failed to load psmouse.ko - mouse may not work" << Colors::RESET << "\n";
     }
     
-    // Mount /dev/sda to /mnt for file system access
-    // First create the /mnt directory if it doesn't exist
+    // Mount disk partition to /mnt for file system access
     mkdir("/mnt", 0755);
     
-    // Mount the QEMU virtual disk
-    if (mount("/dev/sda", "/mnt", "ext4", 0, nullptr) != 0) {
-        // If ext4 fails, try vfat
-        if (mount("/dev/sda", "/mnt", "vfat", 0, nullptr) != 0) {
-            // If vfat fails, try without filesystem type (auto-detect)
-            if (mount("/dev/sda", "/mnt", nullptr, 0, nullptr) != 0) {
-                std::cout << Colors::RED << "[WARNING] Failed to mount /dev/sda to /mnt" << Colors::RESET << "\n";
-                std::cout << Colors::YELLOW << "File system may not be available." << Colors::RESET << "\n";
-            } else {
-                std::cout << Colors::GREEN << "[OK] Mounted /dev/sda to /mnt (auto-detect)" << Colors::RESET << "\n";
-            }
-        } else {
-            std::cout << Colors::GREEN << "[OK] Mounted /dev/sda to /mnt (vfat)" << Colors::RESET << "\n";
+    // Disk is partitioned — try /dev/sda1 first, then /dev/sda as fallback
+    const char* mount_targets[] = {"/dev/sda1", "/dev/sda"};
+    bool mounted = false;
+    for (int t = 0; t < 2 && !mounted; t++) {
+        if (mount(mount_targets[t], "/mnt", "ext4", 0, nullptr) == 0) {
+            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (ext4)" << Colors::RESET << "\n";
+            mounted = true;
+        } else if (mount(mount_targets[t], "/mnt", "vfat", 0, nullptr) == 0) {
+            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (vfat)" << Colors::RESET << "\n";
+            mounted = true;
+        } else if (mount(mount_targets[t], "/mnt", nullptr, 0, nullptr) == 0) {
+            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (auto-detect)" << Colors::RESET << "\n";
+            mounted = true;
         }
-    } else {
-        std::cout << Colors::GREEN << "[OK] Mounted /dev/sda to /mnt (ext4)" << Colors::RESET << "\n";
+    }
+    if (!mounted) {
+        std::cout << Colors::RED << "[WARNING] Failed to mount any disk partition to /mnt" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "File system may not be available." << Colors::RESET << "\n";
     }
     
     KekeShell shell;

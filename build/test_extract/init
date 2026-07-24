@@ -1,0 +1,36 @@
+#!/bin/sh
+echo "[INIT] Starting init_script..."
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+echo "[INIT] Filesystems mounted"
+
+# Load framebuffer modules
+echo "[INIT] Loading framebuffer modules..."
+modprobe fbdev 2>/dev/null || echo "[INIT] fbdev module not found"
+modprobe vesafb 2>/dev/null || echo "[INIT] vesafb module not found"
+modprobe efifb 2>/dev/null || echo "[INIT] efifb module not found"
+modprobe bochs 2>/dev/null || echo "[INIT] bochs module not found"
+
+# List /dev to see what devices are available
+echo "[INIT] Devices in /dev:"
+ls -la /dev/
+
+# Wait for /dev/fb0 to appear
+echo "[INIT] Waiting for /dev/fb0..."
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [ -e /dev/fb0 ]; then
+        echo "[OK] Framebuffer device /dev/fb0 found"
+        break
+    fi
+    echo "[INIT] /dev/fb0 not found yet, waiting..."
+    sleep 0.5
+done
+
+if [ ! -e /dev/fb0 ]; then
+    echo "[ERROR] /dev/fb0 not found after waiting"
+fi
+
+# Execute the real init
+echo "[INIT] Executing /keke-init..."
+exec /keke-init
