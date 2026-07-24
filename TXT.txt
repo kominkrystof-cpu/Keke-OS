@@ -1,61 +1,22 @@
-The Main Issue (The Visual Bug)The entire graphical user interface inside the QEMU virtual machine window is rendered upside down (vertically mirrored). This is a common framebuffer orientation bug during custom OS development, where the pixel coordinate system Y-axis is inverted or the drawing loop goes in the wrong direction.Detailed Breakdown of the QEMU Window (Blue Screen)The "Start" Button: Located in the bottom-left corner, featuring a blue rectangle with the word "START" written upside down.Desktop Icons: Four vertically stacked icons on the left side with mirrored text:Top (Green square): MY COMPUTERSecond (Trash can): RECYCLE BINThird (Orange/yellow drive): KEKE DISKBottom (Blue globe): NETWORKSystem Time: In the bottom-right corner, displaying 16:06.Detailed Breakdown of the Background Terminal (Linux)Humorous Project Path: The window title bar reads:keke@keke-ThinkPad-X380-Yoga: ~/Absolute dogshit coding projects/Keke-OSBuild Files Generated: The terminal lists successful compilation outputs like init (2.5M), keke-initramfs.cpio.zst (2.6M), keke-shell (428K), and the Linux kernel vmlinuz (17M).Warnings: Yellow [WARN] text notes that the script was not run as root (administrator), so it skipped creating device nodes and the final disk image. It instructs the developer to run sudo ./setup_disk.sh.Runtime Languages: The summary shows the OS supports C++, C, JavaScript (via QuickJS), Python, and a custom shell language called Purr++.
+Here is a concise, technical description of the mouse issue in English for your documentation, commit message, or GitHub issue:
 
-General ContextThe user keke is running a build and test command (bash build.sh && qemu-system-x86_64...) for Keke OS Build System v2.7.5 on a Ubuntu Linux machine. The current timestamp of the build is 2026-07-24 16:20:24.Complete Terminal Transcripttextkeke@keke-ThinkPad-X380-Yoga:~/Absolute dogshit coding projects/Keke-OS$ bash build.sh && qemu-system-x86_64 -kernel build/vmlinuz -initrd build/keke-initramfs.cpio.gz -m 512 -vga std -serial stdio
+Issue Description
+Title: Mouse input unresponsive due to missing psmouse kernel module / /dev/input/mice device
 
-Keke OS Build System v2.7.5
-2026-07-24 16:20:24
-Multi-Language Edition
+Problem
+The mouse cursor does not respond to input when launching the GUI framework in Keke OS.
 
-[BUILD] Checking prerequisites...
-[OK] Prerequisites check done
+Root Cause
+Missing PS/2 Mouse Driver: During the boot sequence, the init system logs a warning:
+[WARNING] Failed to load psmouse.ko - mouse may not work
 
-[BUILD] [1/5] Building userspace programs...
-rm -f ../build/init ../build/keke_info ../build/keketool
-Cleaned build artifacts
-g++ -static -std=c++17 main.cpp -o ../build/init
-C++ init built: ../build/init
-gcc -static -O2 -Wall keke_info.c -o ../build/keke_info
-In file included from keke_info.c:2:
-kekeos.h: In function 'keke_hello':
-kekeos.h:55:27: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]
-   55 |         if (ret == 3) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
-      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Missing Input Device Nodes: Because psmouse.ko failed to load (or is omitted from the initramfs), the kernel does not initialize the PS/2 emulation driver in QEMU, preventing the creation of device nodes such as /dev/input/mice or /dev/input/event*.
 
-kekeos.h: In function 'keke_raise_cat':
-kekeos.h:64:27: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]
-   64 |         if (ret == 3) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
-      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Userspace Input Failure: The C++ GUI framework cannot open the input device stream (or falls back to drawing a static cursor), leaving mouse interactions unhandled.
 
-C program built: ../build/keke_info
-gcc -static -O2 -Wall keketool.c -o ../build/keketool
-In file included from keketool.c:4:
-kekeos.h: In function 'keke_raise_cat':
-kekeos.h:64:27: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]
-   64 |         if (ret == 3) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
-      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Solution / Workaround
+Kernel Configuration: Ensure CONFIG_MOUSE_PS2=y is built statically into the kernel (bzImage) instead of compiled as a module (=m).
 
-kekeos.h: In function 'keke_hello':
-kekeos.h:55:27: warning: ignoring return value of 'write' declared with attribute 'warn_unused_result' [-Wunused-result]
-   55 |         if (ret == 3) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
-      |                               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Initramfs Inclusion: If built as a module, include psmouse.ko inside /lib/modules/ within keke-initramfs.cpio.gz and ensure devtmpfs automatically populates /dev/input/.
 
-C program built: ../build/keketool
-[OK] C++ init built: 2,5M
-[OK] C program keke_info built: 768K
-[OK] C program keketool built: 768K
-
-[BUILD] [2/5] Building Keke OS kernel module...
-make -C /lib/modules/7.0.0-28-generic/build M=/tmp/kekeos-mod clean
-make[1]: Entering directory '/usr/src/linux-headers-7.0.0-28-generic'
-make[2]: Entering directory '/tmp/kekeos-mod'
-  CLEAN   Module.symvers
-make[2]: Leaving directory '/tmp/kekeos-mod'
-make[1]: Leaving directory '/usr/src/linux-headers-7.0.0-28-generic'
-make -C /lib/modules/7.0.0-28-generic/build M=/tmp/kekeos-mod modules
-make[1]: Entering directory '/usr/src/linux-headers-7.0.0-28-generic'
-make[2]: Entering directory '/tmp/kekeos-mod'
-warning: the compiler differs from the one used to build the kernel
-  The kernel was built by: x86_64-linux-gnu-gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
-  You are using:           gcc-13 (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
-warning: module version differs from the one used to build the kernel
-Při použití kódu buďte obezřetní.Technical Summary of the OutputCompilation Warnings (-Wunused-result): The C compiler (gcc) outputs warnings inside the header file kekeos.h for functions keke_hello and keke_raise_cat. The code explicitly tries to bypass the warning using a (void) cast on the write() system call, but the compiler still flags it because of the strict warn_unused_result attribute.Successful Binary Output: Despite the warnings, the userspace applications compile successfully:init (C++, 2.5 MB)keke_info (C, 768 KB)keketool (C, 768 KB)Kernel Module Compiler Mismatch: During step [2/5], the script attempts to build a custom Linux kernel module (kekeos-mod). The builder detects a minor environment discrepancy, showing a warning that the current compiler/module setup differs from the original base kernel compilation environment.
+QEMU Parameter: Ensure QEMU is supplied with standard PS/2 mouse or USB tablet device emulation (e.g., -device usb-tablet).

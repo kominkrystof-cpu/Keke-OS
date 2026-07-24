@@ -72,7 +72,6 @@ if [ -f "$BUILD_DIR/kekeos-mod.ko" ]; then
 fi
 
 # Copy bochs DRM kernel module for QEMU VGA framebuffer
-# File is world-readable, no root needed to copy
 echo "[Keke OS] Copying bochs kernel module..."
 BOCHS_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/gpu/drm/tiny/bochs.ko.zst"
 if [ -f "$BOCHS_MODULE_SRC" ]; then
@@ -89,23 +88,19 @@ else
 fi
 
 # Copy psmouse module for PS/2 mouse support
-if [ "$EUID" -eq 0 ]; then
-    echo "[Keke OS] Copying psmouse kernel module..."
-    PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko.zst"
+echo "[Keke OS] Copying psmouse kernel module..."
+PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko.zst"
+if [ -f "$PSMOUSE_MODULE_SRC" ]; then
+    zstd -d "$PSMOUSE_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/psmouse.ko" -f 2>/dev/null
+    echo "[Keke OS] Copied psmouse.ko (from .zst)"
+else
+    PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko"
     if [ -f "$PSMOUSE_MODULE_SRC" ]; then
-        zstd -d "$PSMOUSE_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/psmouse.ko" -f 2>/dev/null
+        cp "$PSMOUSE_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/psmouse.ko"
         echo "[Keke OS] Copied psmouse.ko"
     else
-        PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko"
-        if [ -f "$PSMOUSE_MODULE_SRC" ]; then
-            cp "$PSMOUSE_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/psmouse.ko"
-            echo "[Keke OS] Copied psmouse.ko"
-        else
-            echo "[Keke OS] Warning: psmouse.ko not found, mouse may not work"
-        fi
+        echo "[Keke OS] Warning: psmouse.ko not found, mouse may not work"
     fi
-else
-    echo "[Keke OS] Skipping psmouse copy (not root)"
 fi
 
 # Create the initramfs archive
