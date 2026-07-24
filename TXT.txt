@@ -1,0 +1,53 @@
+General DescriptionThe image shows a Linux desktop environment running a terminal emulator. Inside the terminal, a build script for a custom operating system named "Keke-OS" has been executed. On top of the terminal, a QEMU virtual machine window is open, displaying a simple graphical user interface (GUI) with icons.Text Transcript from the Background TerminalWindow Title Bar:keke@keke-ThinkPad-X380-Yoga: ~/Absolute dogshit coding projects/Keke-OSBuild Log Output:text[WARN] Not root - initramfs will skip device nodes + host modules
+[WARN] Run 'sudo ./build_initramfs.sh' later if needed
+[Keke OS] Building custom initramfs...
+[Keke OS] Copying init program...
+[Keke OS] Copying C program: keke_info
+[Keke OS] Copying C program: keketool
+[Keke OS] Warning: Not root, skipping device node creation.
+[Keke OS] Device nodes will be created by devtmpfs at boot.
+[Keke OS] Copying kekeos-mod.ko
+[Keke OS] Copying bochs kernel module...
+[Keke OS] Copied bochs.ko (from .zst)
+[Keke OS] Skipping pamouse copy (not root)
+[Keke OS] Creating initramfs archive...
+13862 blocks
+[Keke OS] Initramfs created: build/keke-initramfs.cpio.zst
+[Keke OS] Size: 2,6M
+[OK] Initramfs: 2,6M
+
+[BUILD] [4/5] Copying host kernel...
+[OK] Kernel already present: 17M
+
+[BUILD] [5/5] Building disk image...
+[WARN] Not root - cannot create disk image (needs loop devices)
+[WARN] Run 'sudo ./setup_disk.sh' when ready
+[BARK] Quick test (no disk): qemu-system-x86_64 -cdrom keke-os.iso
+
+Build Summary
+=============
+
+Build files:
+  init (2,5M)
+  keke_info (768K)
+  keke-initramfs.cpio.zst (2,6M)
+  kekeos-mod.ko (360K)
+  keke-shell (428K)
+  keketool (768K)
+  qjs (2,0M)
+  vmlinuz (17M)
+
+Languages available at runtime:
+  C++      /init (Keke Shell + GUI)
+  C        /usr/bin/keke_info, /usr/bin/keketool
+  JS       /mnt/bin/qjs (QuickJS) - if disk mounted
+  Python   /mnt/bin/python3 - if disk mounted
+  Purr++   built into shell
+
+Boot commands:
+  Disk:  qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -serial stdio
+  ISO:   qemu-system-x86_64 -cdrom keke-os.iso -m 512 -serial stdio
+  GUI:   qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -vga std -serial stdio
+
+If boot fails, run with: -enable-kvm -cpu host
+Při použití kódu buďte obezřetní.Description of the QEMU Window (GUI)The window is titled "QEMU" with "Machine" and "View" menus at the top left. The operating system interface inside has a blue background and shows four desktop icons aligned vertically on the left. The text for the icons is flipped upside down (mirrored vertically):Top Icon (Green square): MY COMPUTERSecond Icon (Trash bin): RECYCLE BINThird Icon (Folder/Drive with flag): KEKE DISKFourth Icon (Network globe): NETWORKAt the bottom left, there is a blue button acting as a Start Menu, which reads "START" (also written upside down / flipped). At the bottom right, there is a small area showing "16:06" (the system time).

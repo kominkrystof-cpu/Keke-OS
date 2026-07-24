@@ -301,7 +301,7 @@ public:
         }
         
         for (int row = 0; row < 8; row++) {
-            unsigned char font_row = font[char_index][row];
+            unsigned char font_row = font[char_index][7 - row];
             for (int col = 0; col < 8; col++) {
                 if (font_row & (1 << (7 - col))) {
                     setPixel(x + col, y + row, r, g, b);
