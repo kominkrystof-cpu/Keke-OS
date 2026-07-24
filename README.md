@@ -1,4 +1,4 @@
-# 🐱 Keke OS
+# Keke OS
 
 **A multi-language Linux-based operating system with custom kernel syscalls, a retro Windows XP-style GUI, and a built-in programming language.**
 
@@ -221,7 +221,7 @@ See `LICENSE_COMPLIANCE.md` for details on our GPL compliance with modified kern
 
 ## Credits
 
-- **Keke** — Architecture, C++ shell, GUI, Purr++ interpreter
+- **Kryštof Komín** — Architecture, C++ shell, GUI, Purr++ interpreter
 - **Fabrice Bellard** — QuickJS, QEMU
 - **Linus Torvalds** — Linux kernel
 - **GRUB team** — Bootloader

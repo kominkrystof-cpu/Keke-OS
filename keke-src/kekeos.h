@@ -8,6 +8,9 @@
 #include <sys/ioctl.h>
 #include "keke.h"
 
+// Suppress -Wunused-result on write() — cast-to-void isn't enough on GCC
+#define KEKE_IGNORE_RESULT(expr) do { ssize_t __k __attribute__((unused)) = (expr); } while (0)
+
 #ifndef SYS_keke_cmd
 #define SYS_keke_cmd 472
 #endif
@@ -52,7 +55,7 @@ static inline int keke_hello(void)
     char buf[64] = {0};
     int ret = keke_cmd_syscall(KEKE_CMD_HELLO, 0, buf);
     if (ret < 0) ret = keke_cmd_devctl(KEKE_CMD_HELLO, buf);
-    if (ret == 0) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
+    if (ret == 0) { KEKE_IGNORE_RESULT(write(STDOUT_FILENO, buf, sizeof(buf))); }
     return ret;
 }
 
@@ -61,7 +64,7 @@ static inline int keke_raise_cat(void)
     char buf[64] = {0};
     int ret = keke_cmd_syscall(KEKE_CMD_RAISE_CAT, 0, buf);
     if (ret < 0) ret = keke_cmd_devctl(KEKE_CMD_RAISE_CAT, buf);
-    if (ret == 0) { (void)write(STDOUT_FILENO, buf, sizeof(buf)); }
+    if (ret == 0) { KEKE_IGNORE_RESULT(write(STDOUT_FILENO, buf, sizeof(buf))); }
     return ret;
 }
 
