@@ -407,10 +407,10 @@ private:
     }
     
     void printHeader() {
-        std::cout << Colors::CYAN << "Keke OS Terminal [Verze 2.7.5 - Stable Build 2026]\n";
+        std::cout << Colors::CYAN << "Keke OS Terminal [Verze 2.7.5 - Multi-Language Build]\n";
         std::cout << "Copyright (c) 2026 Keke Corporation. Vsechna prava vyzrazena.\n";
         std::cout << "Licence: KekeOS Personal Edition - Aktivovano pro ThinkPad X380.\n";
-        std::cout << "Nainstalujte si nejnovejsi verzi na: https://keke-os.com\n";
+        std::cout << "Languages: C++ | C | Python | JavaScript | Purr++ | Shell\n";
         std::cout << Colors::RESET << "\n";
     }
     
@@ -806,7 +806,7 @@ private:
                         "print(\"----------------\")\n"
                         "print(\"Zadejte 'q' pro ukončení...\")\n"
                         "input cmd\n"
-                        "set quit_check = 113\n"
+                        "set quit_check = 0\n"
                         "if_eq cmd quit_check exit\n"
                         "add ball_x 1\n"
                         "add score 1\n"
@@ -1106,22 +1106,41 @@ private:
     // Execute file (./filename)
     void executeFile(const std::string& filename) {
         std::string full_path = current_dir + "/" + filename;
-        
+
         // Check if file exists
         struct stat st;
         if (stat(full_path.c_str(), &st) != 0) {
             std::cout << Colors::RED << "Soubor neexistuje" << Colors::RESET << "\n";
             return;
         }
-        
-        // Check if it's executable or a script
-        if (S_ISREG(st.st_mode)) {
-            // Try to execute as Purr++
-            std::cout << Colors::CYAN << "Spouštím Purr++: " << filename << "\n" << Colors::RESET;
-            executeKekeScript(full_path);
-        } else {
+
+        if (!S_ISREG(st.st_mode)) {
             std::cout << Colors::RED << "Soubor není spustitelný" << Colors::RESET << "\n";
+            return;
         }
+
+        // Detect file extension and run with appropriate interpreter
+        size_t dot = filename.rfind('.');
+        if (dot != std::string::npos) {
+            std::string ext = filename.substr(dot);
+            if (ext == ".py") {
+                executeExternal("/mnt/bin/python3 " + full_path);
+                return;
+            } else if (ext == ".js") {
+                executeExternal("/mnt/bin/qjs " + full_path);
+                return;
+            } else if (ext == ".sh") {
+                executeExternal("/bin/sh " + full_path);
+                return;
+            } else if (ext == ".c") {
+                std::cout << Colors::YELLOW << "C soubory musí být nejprve zkompilovány. Použijte 'kkc " << filename << "'" << Colors::RESET << "\n";
+                return;
+            }
+        }
+
+        // Default: run as Purr++ script
+        std::cout << Colors::CYAN << "Spouštím Purr++: " << filename << "\n" << Colors::RESET;
+        executeKekeScript(full_path);
     }
     
     // Launch the Windows XP-style GUI
@@ -1411,14 +1430,15 @@ public:
                 
                 // Built-in commands from kernel.c
                 if (strcmp_custom(cmd.c_str(), "help") == 0) {
-                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, kpm, gui, color, cursor, origin, windows");
+                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, kpm, gui, color, cursor, origin, windows, keke_info, keketool");
                 }
                 else if (strcmp_custom(cmd.c_str(), "ver") == 0) {
                     std::cout << Colors::CYAN << "--------------------------------------------\n";
                     std::cout << "Keke Operating System [v2.7.5 - Stable Update]\n";
                     std::cout << "Build Date: Sunday, July 6, 2026\n";
                     std::cout << "Target HW: Intel UHD / Lenovo X380 Yoga\n";
-                    std::cout << "Kernel: C++ (Linux-based)\n";
+                    std::cout << "Kernel: Custom Linux + Keke syscalls (x86_64)\n";
+                    std::cout << "Languages: C++, C, Python, JavaScript, Purr++\n";
                     std::cout << "---------------------------------------------\n" << Colors::RESET;
                 }
                 else if (strcmp_custom(cmd.c_str(), "cls") == 0) {
@@ -1565,8 +1585,26 @@ public:
                     std::cout << Colors::RESET;
                 }
                 else {
-                    // Try to execute as external command
-                    std::cout << Colors::RED << "-kekeShell: " << input << ": command not found\n" << Colors::RESET;
+                    // Try to execute as external binary or script in standard paths
+                    struct stat ext_st;
+                    std::string paths[] = {
+                        current_dir + "/" + cmd,
+                        "/mnt/bin/" + cmd,
+                        "/usr/bin/" + cmd,
+                        "/bin/" + cmd,
+                        "/mnt/" + cmd
+                    };
+                    bool found = false;
+                    for (auto& p : paths) {
+                        if (stat(p.c_str(), &ext_st) == 0 && S_ISREG(ext_st.st_mode) && (ext_st.st_mode & S_IXUSR)) {
+                            executeExternal(p);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        std::cout << Colors::RED << "-kekeShell: " << input << ": command not found\n" << Colors::RESET;
+                    }
                 }
                 
                 // Clear any temporary allocations
@@ -1600,12 +1638,18 @@ int main() {
         }
     }
 
-    // Load PS/2 mouse module (CONFIG_MOUSE_PS2=m, not built-in)
-    // This must happen after devtmpfs so /dev/input/mice gets created
+    // Load PS/2 mouse module
     if (loadKernelModule("/lib/modules/psmouse.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] Loaded psmouse module (mouse support)" << Colors::RESET << "\n";
     } else {
         std::cout << Colors::YELLOW << "[WARNING] Failed to load psmouse.ko - mouse may not work" << Colors::RESET << "\n";
+    }
+
+    // Load Keke OS custom kernel module (/dev/kekeos)
+    if (loadKernelModule("/lib/modules/kekeos-mod.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] Keke OS module loaded (/dev/kekeos)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko not found - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
     }
     
     // Mount disk partition to /mnt for file system access
