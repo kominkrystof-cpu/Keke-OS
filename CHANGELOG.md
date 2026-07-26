@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.7.6 — Git Hygiene + GUI Architecture Review (2026-07-26)
+
+### Repository
+- **Added `TXT.txt` to `.gitignore`** — prevents template file from being tracked
+
+### GUI Architecture (keke-src/gui.hpp)
+- **Analyzed current C++ framebuffer GUI** — ~1,100 lines, Windows XP Luna style
+- **Decision: Keep custom C++ implementation** — unique OS personality, no external deps, existing double-buffering + dirty-region optimization is solid
+- **Future improvements identified**: font atlas for text rendering, layout system, retained-mode scene graph
+
+### Documentation
+- Updated CHANGELOG.md with this entry
+
+---
+
 ## v2.7.5 — Multi-Language + Custom Kernel Edition (2026-07-24)
 
 ### Architecture Change
