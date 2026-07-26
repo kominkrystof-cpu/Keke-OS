@@ -51,6 +51,7 @@ private:
     struct fb_fix_screeninfo finfo;
     long screensize;
     int width, height, bpp;
+    bool flip_y = false;
     
 public:
     Framebuffer() : fb_fd(-1), fb_mem(nullptr), backbuffer(nullptr), screensize(0), width(0), height(0), bpp(0) {}
@@ -108,6 +109,12 @@ public:
         bpp = vinfo.bits_per_pixel;
         screensize = finfo.smem_len;
         
+        // Check if framebuffer has rotated orientation (rotate=2 means 180 deg flip)
+        if (vinfo.rotate == 2) {
+            flip_y = true;
+            std::cout << "\033[33m[FB] Framebuffer rotated 180 degrees, enabling Y-flip\033[0m\n";
+        }
+        
         // Map framebuffer to memory
         fb_mem = (unsigned char*)mmap(nullptr, screensize, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
         if (fb_mem == MAP_FAILED) {
@@ -123,6 +130,11 @@ public:
         }
         
         return true;
+    }
+    
+    // Get effective Y coordinate (flipped if needed)
+    int getEffectiveY(int y) const {
+        return flip_y ? (height - 1 - y) : y;
     }
     
     // Swap backbuffer to screen (single memcpy = no tearing)
@@ -142,7 +154,8 @@ public:
         if (w <= 0 || h <= 0) return;
         int bpp_bytes = bpp / 8;
         for (int row = 0; row < h; row++) {
-            int offset = (y + row) * finfo.line_length + x * bpp_bytes;
+            int eff_y = getEffectiveY(y + row);
+            int offset = eff_y * finfo.line_length + x * bpp_bytes;
             memcpy(fb_mem + offset, backbuffer + offset, w * bpp_bytes);
         }
     }
@@ -171,7 +184,8 @@ public:
         if (x < 0 || x >= width || y < 0 || y >= height) return;
         if (!backbuffer) return;
         
-        long location = (x + vinfo.xoffset) * (bpp / 8) + (y + vinfo.yoffset) * finfo.line_length;
+        int eff_y = getEffectiveY(y);
+        long location = (x + vinfo.xoffset) * (bpp / 8) + (eff_y + vinfo.yoffset) * finfo.line_length;
         
         if (bpp == 32) {
             backbuffer[location] = b;
@@ -1386,7 +1400,7 @@ private:
     }
 
 public:
-    KekeShell() : current_dir("/mnt"), current_text_color(Colors::WHITE), current_bg_color(""), cursor_style(0), history_count(0), history_index(-1) {
+    KekeShell() : current_dir("/mnt"), current_text_color(Colors::WHITE), current_bg_color(""), cursor_style(1), history_count(0), history_index(-1) {
         command_history.reserve(HISTORY_SIZE);
     }
     
