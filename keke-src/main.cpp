@@ -52,6 +52,7 @@ private:
     long screensize;
     int width, height, bpp;
     bool flip_y = false;
+    bool flip_x = false;
     
 public:
     Framebuffer() : fb_fd(-1), fb_mem(nullptr), backbuffer(nullptr), screensize(0), width(0), height(0), bpp(0) {}
@@ -109,10 +110,12 @@ public:
         bpp = vinfo.bits_per_pixel;
         screensize = finfo.smem_len;
         
-        // Check if framebuffer has rotated orientation (rotate=2 means 180 deg flip)
+        // Check if framebuffer has rotated orientation
+        // rotate=1 = 90° CCW, rotate=2 = 180°, rotate=3 = 270° CCW
         if (vinfo.rotate == 2) {
             flip_y = true;
-            std::cout << "\033[33m[FB] Framebuffer rotated 180 degrees, enabling Y-flip\033[0m\n";
+            flip_x = true;
+            std::cout << "\033[33m[FB] Framebuffer rotated 180 degrees, enabling X+Y flip\033[0m\n";
         }
         
         // Map framebuffer to memory
@@ -132,6 +135,11 @@ public:
         return true;
     }
     
+    // Get effective X coordinate (flipped if needed)
+    int getEffectiveX(int x) const {
+        return flip_x ? (width - 1 - x) : x;
+    }
+    
     // Get effective Y coordinate (flipped if needed)
     int getEffectiveY(int y) const {
         return flip_y ? (height - 1 - y) : y;
@@ -147,6 +155,11 @@ public:
     // Swap only a region from backbuffer to screen (for cursor-only updates)
     void swapBuffersRegion(int x, int y, int w, int h) {
         if (!backbuffer || !fb_mem) return;
+        // When flipped, region mapping is complex; fall back to full swap
+        if (flip_x || flip_y) {
+            memcpy(fb_mem, backbuffer, screensize);
+            return;
+        }
         if (x < 0) { w += x; x = 0; }
         if (y < 0) { h += y; y = 0; }
         if (x + w > width) w = width - x;
@@ -154,8 +167,7 @@ public:
         if (w <= 0 || h <= 0) return;
         int bpp_bytes = bpp / 8;
         for (int row = 0; row < h; row++) {
-            int eff_y = getEffectiveY(y + row);
-            int offset = eff_y * finfo.line_length + x * bpp_bytes;
+            int offset = (y + row) * finfo.line_length + x * bpp_bytes;
             memcpy(fb_mem + offset, backbuffer + offset, w * bpp_bytes);
         }
     }
@@ -184,8 +196,9 @@ public:
         if (x < 0 || x >= width || y < 0 || y >= height) return;
         if (!backbuffer) return;
         
+        int eff_x = getEffectiveX(x);
         int eff_y = getEffectiveY(y);
-        long location = (x + vinfo.xoffset) * (bpp / 8) + (eff_y + vinfo.yoffset) * finfo.line_length;
+        long location = (eff_x + vinfo.xoffset) * (bpp / 8) + (eff_y + vinfo.yoffset) * finfo.line_length;
         
         if (bpp == 32) {
             backbuffer[location] = b;
