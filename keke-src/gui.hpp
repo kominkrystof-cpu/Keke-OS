@@ -877,6 +877,7 @@ private:
         int bpp = fb->getBpp() / 8;
         int line_len = fb->getLineLength();
         unsigned char* buf = fb->getBackbuffer();
+        unsigned char* fb_mem = fb->getFramebuffer();
 
         // 1. Restore old cursor background in backbuffer
         if (cursor_bg_valid) {
@@ -892,17 +893,15 @@ private:
             }
         }
 
-        // 2. Save new cursor background from backbuffer
+        // 2. Save new cursor background from framebuffer (clean bg, no cursor there)
         cursor_saved_x = mouse_x;
         cursor_saved_y = mouse_y;
-        for (int j = 0; j < GuiTheme::MOUSE_H; j++) {
+        for (int j = 0; j < GuiTheme::MOUSE_H && cursor_saved_y + j < screen_h; j++) {
             int y = cursor_saved_y + j;
-            if (y >= screen_h) break;
-            for (int i = 0; i < GuiTheme::MOUSE_W; i++) {
+            for (int i = 0; i < GuiTheme::MOUSE_W && cursor_saved_x + i < screen_w; i++) {
                 int x = cursor_saved_x + i;
-                if (x >= screen_w) break;
                 memcpy(cursor_bg + (j * GuiTheme::MOUSE_W + i) * bpp,
-                       buf + y * line_len + x * bpp, bpp);
+                       fb_mem + y * line_len + x * bpp, bpp);
             }
         }
         cursor_bg_valid = true;
