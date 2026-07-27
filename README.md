@@ -110,6 +110,9 @@ qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -serial stdio
 # With GUI (framebuffer)
 qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -vga std -serial stdio
 
+# With networking (user-mode NAT)
+qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -enable-kvm -cpu host -netdev user,id=net0 -device e1000,netdev=net0 -nographic -serial mon:stdio
+
 # From ISO
 qemu-system-x86_64 -cdrom keke-os.iso -m 512 -serial stdio
 
@@ -184,13 +187,22 @@ qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -enable-kvm -cpu 
 | `mkdir <dir>` | Create directory |
 | `rm <file>` | Remove file |
 | `touch <file>` | Create empty file |
+| `cp <src> <dst>` | Copy file |
+| `mv <src> <dst>` | Move/rename file |
+| `chmod <mode> <file>` | Change file permissions |
+| `find [path]` | Find files recursively |
+| `grep <pattern> [files]` | Search text in files |
 | `cat <file>` | Read file (or easter egg if no arg) |
-| `kpm <subcmd>` | Keke Package Manager |
+| `kpm <subcmd>` | Keke Package Manager (install/list/remove/update/repo) |
+| `net <url>` | Raw HTTP GET request |
 | `gui` | Launch XP-style GUI |
 | `color <name>` | Change terminal colors |
 | `cursor <arrow\|paw>` | Change cursor style |
 | `keke_info` | System info via custom syscall |
 | `keketool <cmd>` | Keke CLI tool |
+| `jobs` | List background jobs |
+| `fg` | Bring background job to foreground |
+| `bg` | Confirm background jobs running |
 | `./script.py` | Run Python script |
 | `./script.js` | Run JavaScript script |
 | `./script.sh` | Run Shell script |
