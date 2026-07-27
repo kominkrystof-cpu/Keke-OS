@@ -1,17 +1,23 @@
 # Changelog
 
-## v2.7.6 — Git Hygiene + GUI Architecture Review (2026-07-26)
+## v2.7.7 — Networking + Real KPM (2026-07-27)
 
-### Repository
-- **Added `TXT.txt` to `.gitignore`** — prevents template file from being tracked
+### Networking
+- **TCP sockets now functional** — userspace socket(), connect(), send(), recv() work via Linux kernel
+- **`net <url>` command** — raw HTTP GET client for debugging/testing (e.g. `net http://example.com/file.txt`)
+- **`httpGet()` helper** in `KekeShell` — resolves hostnames via `gethostbyname()`, sends HTTP/1.1 GET request, receives full response
 
-### GUI Architecture (keke-src/gui.hpp)
-- **Analyzed current C++ framebuffer GUI** — ~1,100 lines, Windows XP Luna style
-- **Decision: Keep custom C++ implementation** — unique OS personality, no external deps, existing double-buffering + dirty-region optimization is solid
-- **Future improvements identified**: font atlas for text rendering, layout system, retained-mode scene graph
+### KPM (Keke Package Manager) — Real Implementation
+- **`kpm repo <url>`** — set package repository URL (e.g. `kpm repo http://packages.keke-os.org`)
+- **`kpm update`** — fetches `packages.json` from repo over HTTP, counts available packages
+- **`kpm list`** — fetches and parses `packages.json`, lists name + description for each package
+- **`kpm install <pkg>`** — downloads `<pkg>.pkg` from `/packages/` path on repo server, writes to `/mnt/<pkg>`
+- **`kpm remove <pkg>`** — unchanged, works as before
+- **`kpm repo` without args** — shows current repository URL or prompts to set one
 
-### Documentation
-- Updated CHANGELOG.md with this entry
+### Previous Changes (Carried Forward)
+- v2.7.6: Git hygiene + GUI architecture review, TXT.txt in .gitignore
+- v2.7.5: Multi-language support (C, Python, JS, Purr++, Shell), custom kernel syscalls
 
 ---
 
