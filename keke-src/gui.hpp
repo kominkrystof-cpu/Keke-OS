@@ -625,6 +625,23 @@ public:
                     // Full render path
                     render();
                     fb->swapBuffers();
+                    // Save cursor background so cursor-only path can erase old cursor next frame
+                    cursor_saved_x = mouse_x;
+                    cursor_saved_y = mouse_y;
+                    int bpp = fb->getBpp() / 8;
+                    int line_len = fb->getLineLength();
+                    unsigned char* buf = fb->getBackbuffer();
+                    for (int j = 0; j < GuiTheme::MOUSE_H; j++) {
+                        int y = cursor_saved_y + j;
+                        if (y >= screen_h) break;
+                        for (int i = 0; i < GuiTheme::MOUSE_W; i++) {
+                            int x = cursor_saved_x + i;
+                            if (x >= screen_w) break;
+                            memcpy(cursor_bg + (j * GuiTheme::MOUSE_W + i) * bpp,
+                                   buf + y * line_len + x * bpp, bpp);
+                        }
+                    }
+                    cursor_bg_valid = true;
                 }
                 dirty = false;
                 force_full_render = false;
@@ -877,7 +894,6 @@ private:
         int bpp = fb->getBpp() / 8;
         int line_len = fb->getLineLength();
         unsigned char* buf = fb->getBackbuffer();
-        unsigned char* fb_mem = fb->getFramebuffer();
 
         // 1. Restore old cursor background in backbuffer
         if (cursor_bg_valid) {
@@ -893,15 +909,17 @@ private:
             }
         }
 
-        // 2. Save new cursor background from framebuffer (clean bg, no cursor there)
+        // 2. Save new cursor background from backbuffer
         cursor_saved_x = mouse_x;
         cursor_saved_y = mouse_y;
-        for (int j = 0; j < GuiTheme::MOUSE_H && cursor_saved_y + j < screen_h; j++) {
+        for (int j = 0; j < GuiTheme::MOUSE_H; j++) {
             int y = cursor_saved_y + j;
-            for (int i = 0; i < GuiTheme::MOUSE_W && cursor_saved_x + i < screen_w; i++) {
+            if (y >= screen_h) break;
+            for (int i = 0; i < GuiTheme::MOUSE_W; i++) {
                 int x = cursor_saved_x + i;
+                if (x >= screen_w) break;
                 memcpy(cursor_bg + (j * GuiTheme::MOUSE_W + i) * bpp,
-                       fb_mem + y * line_len + x * bpp, bpp);
+                       buf + y * line_len + x * bpp, bpp);
             }
         }
         cursor_bg_valid = true;
@@ -1089,25 +1107,7 @@ private:
         g->drawRectOutline(clock_x - 2, clock_y - 2, GuiTheme::CLOCK_WIDTH + 4, 20, 120, 170, 220);
         g->drawString(clock_x + (GuiTheme::CLOCK_WIDTH - 40) / 2, clock_y, time_str, 255, 255, 255);
 
-        // 8. Save cursor background (before drawing cursor, for ghost-free cursor-only updates)
-        {
-            int bpp = fb->getBpp() / 8;
-            int line_len = fb->getLineLength();
-            unsigned char* buf = fb->getBackbuffer();
-            cursor_saved_x = mouse_x;
-            cursor_saved_y = mouse_y;
-            for (int j = 0; j < GuiTheme::MOUSE_H && cursor_saved_y + j < screen_h; j++) {
-                for (int i = 0; i < GuiTheme::MOUSE_W && cursor_saved_x + i < screen_w; i++) {
-                    int sy = cursor_saved_y + j;
-                    int sx = cursor_saved_x + i;
-                    memcpy(cursor_bg + (j * GuiTheme::MOUSE_W + i) * bpp,
-                           buf + sy * line_len + sx * bpp, bpp);
-                }
-            }
-            cursor_bg_valid = true;
-        }
-
-        // 9. Mouse cursor (always on top)
+        // 8. Mouse cursor (always on top)
         g->drawCursor(mouse_x, mouse_y);
     }
 };

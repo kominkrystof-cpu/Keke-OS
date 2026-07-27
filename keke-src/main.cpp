@@ -190,7 +190,6 @@ public:
     int getBpp() const { return bpp; }
     int getLineLength() const { return finfo.line_length; }
     unsigned char* getBackbuffer() const { return backbuffer; }
-    unsigned char* getFramebuffer() const { return fb_mem; }
     
     // Set pixel at (x, y) with RGB color — writes to backbuffer
     void setPixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
