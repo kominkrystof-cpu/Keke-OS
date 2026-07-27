@@ -394,6 +394,7 @@ private:
     std::string current_dir;
     std::string current_text_color;
     std::string current_bg_color;
+    std::string repo_url;  // KPM repository URL
     int cursor_style; // 0 = arrow, 1 = cat paw
     std::vector<std::string> command_history;
     int history_count;
@@ -773,128 +774,108 @@ private:
     // KPM (Keke Package Manager) commands
     void cmdKpm(const std::string& arg) {
         if (arg.empty()) {
-            std::cout << Colors::YELLOW << "Keke Package Manager v1.0\n";
+            std::cout << Colors::YELLOW << "Keke Package Manager v2.0\n";
             std::cout << Colors::WHITE << "Použití: kpm <příkaz> [argumenty]\n";
             std::cout << Colors::CYAN << "Příkazy:\n";
-            std::cout << "  install <balík>  - Nainstalovat balík\n";
+            std::cout << "  repo <url>       - Nastavit repozitář\n";
+            std::cout << "  install <balík>  - Nainstalovat balík ze serveru\n";
             std::cout << "  list             - Vypsat dostupné balíky\n";
             std::cout << "  remove <balík>   - Odstranit balík\n";
             std::cout << "  update           - Aktualizovat seznam balíků\n" << Colors::RESET;
             return;
         }
-        
+
         size_t space_pos = arg.find(' ');
         std::string kpm_cmd = (space_pos == std::string::npos) ? arg : arg.substr(0, space_pos);
         std::string kpm_arg = (space_pos == std::string::npos) ? "" : arg.substr(space_pos + 1);
-        
+
+        if (strcmp_custom(kpm_cmd.c_str(), "repo") == 0) {
+            if (kpm_arg.empty()) {
+                if (repo_url.empty()) {
+                    std::cout << Colors::YELLOW << "Repozitář není nastaven. Použijte: kpm repo <url>\n" << Colors::RESET;
+                } else {
+                    std::cout << Colors::CYAN << "Aktuální repozitář: " << repo_url << Colors::RESET << "\n";
+                }
+                return;
+            }
+            repo_url = kpm_arg;
+            if (repo_url.find("http://") != 0 && repo_url.find("https://") != 0) {
+                repo_url = "http://" + repo_url;
+            }
+            std::cout << Colors::GREEN << "Repozitář nastaven na: " << repo_url << Colors::RESET << "\n";
+            return;
+        }
+
+        if (repo_url.empty()) {
+            std::cout << Colors::RED << "Repozitář není nastaven! Použijte: kpm repo <url>\n" << Colors::RESET;
+            return;
+        }
+
         if (strcmp_custom(kpm_cmd.c_str(), "list") == 0) {
-            std::cout << Colors::CYAN << "Dostupné balíky:\n";
-            std::cout << "  pong      - Hra Pong v Purr++\n";
-            std::cout << "  hello     - Ukázkový program Hello World\n";
-            std::cout << "  calc      - Pokročilá kalkulačka\n" << Colors::RESET;
+            std::cout << Colors::YELLOW << "Načítám seznam balíků z " << repo_url << "/packages.json...\n" << Colors::RESET;
+            std::string json = httpGet(repo_url, "/packages.json");
+            if (json.find("ERROR") == 0) {
+                std::cout << Colors::RED << "Chyba při stažení seznamu: " << json << Colors::RESET << "\n";
+                return;
+            }
+            // Simple JSON parsing: extract "name": "description" pairs
+            std::cout << Colors::CYAN << "Dostupné balíky:\n" << Colors::RESET;
+            size_t pos = 0;
+            while ((pos = json.find("\"name\"", pos)) != std::string::npos) {
+                pos += 6;
+                while (pos < json.length() && json[pos] != '"') pos++;
+                if (pos >= json.length()) break;
+                pos++;
+                size_t name_start = pos;
+                while (pos < json.length() && json[pos] != '"') pos++;
+                std::string name = json.substr(name_start, pos - name_start);
+
+                pos += 2; // skip ",
+                while (pos < json.length() && json[pos] != '"') pos++;
+                if (pos >= json.length()) break;
+                pos++;
+                while (pos < json.length() && json[pos] != '"') pos++;
+                if (pos < json.length()) pos++;
+                size_t desc_start = pos;
+                while (pos < json.length() && json[pos] != '"') pos++;
+                std::string desc = json.substr(desc_start, pos - desc_start);
+
+                std::cout << "  " << name << "  - " << desc << "\n";
+            }
+            std::cout << Colors::RESET;
         }
         else if (strcmp_custom(kpm_cmd.c_str(), "install") == 0) {
             if (kpm_arg.empty()) {
                 std::cout << Colors::RED << "Zadejte název balíku" << Colors::RESET << "\n";
                 return;
             }
-            
-            std::cout << Colors::YELLOW << "Stahuji balík: " << kpm_arg << "...\n" << Colors::RESET;
-            
-            // For now, simulate download (real implementation would use HTTP)
-            std::cout << Colors::GREEN << "Balík " << kpm_arg << " úspěšně nainstalován do /mnt/" << Colors::RESET << "\n";
-            
-            // Create package file based on type
-            std::string install_path = "/mnt/" + kpm_arg;
-            int fd = open(install_path.c_str(), O_CREAT | O_WRONLY, 0755);
-            if (fd >= 0) {
-                if (strcmp_custom(kpm_arg.c_str(), "pong") == 0) {
-                    // Pong game script with game loop and emergency brake
-                    const char* pong_script = 
-                        "#!/usr/bin/env purr++\n"
-                        "# KekeOS Pong Game\n"
-                        "print(\"=== KEKE PONG ===\")\n"
-                        "print(\"Stiskněte Enter pro start...\")\n"
-                        "input dummy\n"
-                        "cls\n"
-                        "set score = 0\n"
-                        "set ball_x = 10\n"
-                        "set paddle_x = 5\n"
-                        ":game_loop\n"
-                        "cls\n"
-                        "color(\"green\")\n"
-                        "print(\"Score: \")\n"
-                        "print_var(score)\n"
-                        "color(\"white\")\n"
-                        "print(\"----------------\")\n"
-                        "print(\"|              |\")\n"
-                        "print(\"|              |\")\n"
-                        "print(\"|      @       |\")\n"
-                        "print(\"|              |\")\n"
-                        "print(\"|    |===|     |\")\n"
-                        "print(\"----------------\")\n"
-                        "print(\"Zadejte 'q' pro ukončení...\")\n"
-                        "input cmd\n"
-                        "set quit_check = 0\n"
-                        "if_eq cmd quit_check exit\n"
-                        "add ball_x 1\n"
-                        "add score 1\n"
-                        "sleep(1)\n"
-                        "goto game_loop\n";
-                    write(fd, pong_script, strlen_custom(pong_script));
-                }
-                else if (strcmp_custom(kpm_arg.c_str(), "hello") == 0) {
-                    // Hello World script
-                    const char* hello_script = 
-                        "#!/usr/bin/env purr++\n"
-                        "# Hello World\n"
-                        "print(\"Hello, KekeOS!\")\n"
-                        "print(\"Vítej v systému!\")\n"
-                        "color(\"cyan\")\n"
-                        "print(\"KekeOS Shell v2.7.5\")\n"
-                        "color(\"reset\")\n";
-                    write(fd, hello_script, strlen_custom(hello_script));
-                }
-                else if (strcmp_custom(kpm_arg.c_str(), "calc") == 0) {
-                    // Calculator script - using assembly-style add/sub
-                    const char* calc_script = 
-                        "#!/usr/bin/env purr++\n"
-                        "# KekeOS Calculator\n"
-                        "print(\"=== KEKE CALCULATOR ===\")\n"
-                        "print(\"Zadejte první číslo:\")\n"
-                        "input num1\n"
-                        "print(\"Zadejte druhé číslo:\")\n"
-                        "input num2\n"
-                        "cls\n"
-                        "print(\"Výsledky:\")\n"
-                        "print(\"Součet: \")\n"
-                        "set result = num1\n"
-                        "add result num2\n"
-                        "print_var(result)\n"
-                        "print(\"Rozdíl: \")\n"
-                        "set result = num1\n"
-                        "sub result num2\n"
-                        "print_var(result)\n"
-                        "print(\"Stiskněte Enter pro návrat...\")\n"
-                        "input dummy\n";
-                    write(fd, calc_script, strlen_custom(calc_script));
-                }
-                else {
-                    // Generic package
-                    const char* content = "#!/usr/bin/env kekescript\n# KekeOS Package\nprint(\"Balík ";
-                    write(fd, content, strlen_custom(content));
-                    write(fd, kpm_arg.c_str(), kpm_arg.length());
-                    write(fd, "\")\n", 3);
-                }
-                close(fd);
+
+            std::cout << Colors::YELLOW << "Stahuji balík " << kpm_arg << " ze " << repo_url << "...\n" << Colors::RESET;
+
+            std::string url = repo_url + "/packages/" + kpm_arg + ".pkg";
+            std::string content = httpGet(repo_url, "/packages/" + kpm_arg + ".pkg");
+
+            if (content.find("ERROR") == 0) {
+                std::cout << Colors::RED << "Chyba při stažení: " << content << Colors::RESET << "\n";
+                return;
             }
+
+            std::string install_path = "/mnt/" + kpm_arg;
+            int fd = open(install_path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0755);
+            if (fd < 0) {
+                std::cout << Colors::RED << "Chyba při vytváření souboru" << Colors::RESET << "\n";
+                return;
+            }
+            write(fd, content.c_str(), content.length());
+            close(fd);
+            std::cout << Colors::GREEN << "Balík " << kpm_arg << " úspěšně nainstalován do /mnt/" << Colors::RESET << "\n";
         }
         else if (strcmp_custom(kpm_cmd.c_str(), "remove") == 0) {
             if (kpm_arg.empty()) {
                 std::cout << Colors::RED << "Zadejte název balíku" << Colors::RESET << "\n";
                 return;
             }
-            
+
             std::string package_path = "/mnt/" + kpm_arg;
             if (unlink(package_path.c_str()) == 0) {
                 std::cout << Colors::GREEN << "Balík " << kpm_arg << " odstraněn" << Colors::RESET << "\n";
@@ -903,11 +884,63 @@ private:
             }
         }
         else if (strcmp_custom(kpm_cmd.c_str(), "update") == 0) {
-            std::cout << Colors::YELLOW << "Aktualizuji seznam balíků...\n" << Colors::RESET;
-            std::cout << Colors::GREEN << "Seznam balíků aktualizován" << Colors::RESET << "\n";
+            std::cout << Colors::YELLOW << "Aktualizuji seznam balíků z " << repo_url << "...\n" << Colors::RESET;
+            std::string json = httpGet(repo_url, "/packages.json");
+            if (json.find("ERROR") == 0) {
+                std::cout << Colors::RED << "Chyba při aktualizaci: " << json << Colors::RESET << "\n";
+                return;
+            }
+            // Count packages in JSON
+            int count = 0;
+            size_t pos = 0;
+            while ((pos = json.find("\"name\"", pos)) != std::string::npos) {
+                count++;
+                pos += 6;
+            }
+            std::cout << Colors::GREEN << "Seznam balíků aktualizován (" << count << " balíků)" << Colors::RESET << "\n";
         }
         else {
-            std::cout << Colors::RED << "Neznámý příkaz kpm" << Colors::RESET << "\n";
+            std::cout << Colors::RED << "Neznámý příkaz kpm: " << kpm_cmd << Colors::RESET << "\n";
+        }
+    }
+
+    // NET command: raw HTTP GET request for debugging/testing
+    void cmdNet(const std::string& arg) {
+        if (arg.empty()) {
+            std::cout << Colors::YELLOW << "Net - HTTP GET tool\n";
+            std::cout << Colors::WHITE << "Použití: net <URL>\n";
+            std::cout << Colors::CYAN << "Příklad: net http://example.com/index.html\n" << Colors::RESET;
+            return;
+        }
+
+        // Parse URL: http://host/path
+        std::string url = arg;
+        if (url.find("http://") == 0) {
+            url = url.substr(7);
+        } else if (url.find("https://") == 0) {
+            std::cout << Colors::RED << "HTTPS not supported yet, use http:// URL\n" << Colors::RESET;
+            return;
+        }
+
+        size_t path_pos = url.find('/');
+        std::string host = (path_pos == std::string::npos) ? url : url.substr(0, path_pos);
+        std::string path = (path_pos == std::string::npos) ? "/" : url.substr(path_pos);
+
+        std::cout << Colors::YELLOW << "GET http://" << host << path << "\n" << Colors::RESET;
+
+        std::string response = httpGet(host, path);
+
+        if (response.find("ERROR") == 0) {
+            std::cout << Colors::RED << response << Colors::RESET << "\n";
+            return;
+        }
+
+        // Strip HTTP headers (find \r\n\r\n)
+        size_t body_start = response.find("\r\n\r\n");
+        if (body_start != std::string::npos) {
+            std::cout << response.substr(body_start + 4);
+        } else {
+            std::cout << response;
         }
     }
     
@@ -1507,6 +1540,9 @@ public:
                 }
                 else if (strcmp_custom(cmd.c_str(), "kpm") == 0) {
                     cmdKpm(arg);
+                }
+                else if (strcmp_custom(cmd.c_str(), "net") == 0) {
+                    cmdNet(arg);
                 }
                 else if (strcmp_custom(cmd.c_str(), "gui") == 0) {
                     cmdGui();
