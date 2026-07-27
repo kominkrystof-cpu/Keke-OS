@@ -1,27 +1,34 @@
 # Changelog
 
-## v2.7.7 — Networking + Real KPM (2026-07-27)
+## v2.7.8 — Shell Tooling + Networking + KPM (2026-07-27)
 
-### Networking
-- **TCP sockets now functional** — userspace socket(), connect(), send(), recv() work via Linux kernel
-- **`net <url>` command** — raw HTTP GET client for debugging/testing (e.g. `net http://example.com/file.txt`)
-- **`httpGet()` helper** in `KekeShell` — resolves hostnames via `gethostbyname()`, sends HTTP/1.1 GET request, receives full response
+### Shell Tooling
+- **Pipe support**: `cmd1 | cmd2` — pipes stdout of cmd1 to stdin of cmd2 via `pipe()` + `fork()`
+- **Output redirection**: `cmd > file` (overwrite), `cmd >> file` (append)
+- **Background jobs**: `cmd &` — runs command in background, returns prompt immediately
+- **`jobs`** — lists running background jobs with PID and status
+- **`fg`** — brings last background job to foreground
+- **`bg`** — confirms all background jobs are running
+- **`cp <src> <dst>`** — copy files (delegates to `/bin/sh` cp)
+- **`mv <src> <dst>`** — move/rename files
+- **`chmod <mode> <file>`** — change file permissions
+- **`find [path]`** — find files recursively (default: current directory)
+- **`grep <pattern> [files...]`** — search text patterns
 
-### KPM (Keke Package Manager) — Real Implementation
-- **`kpm repo <url>`** — set package repository URL (e.g. `kpm repo http://packages.keke-os.org`)
-- **`kpm update`** — fetches `packages.json` from repo over HTTP, counts available packages
-- **`kpm list`** — fetches and parses `packages.json`, lists name + description for each package
-- **`kpm install <pkg>`** — downloads `<pkg>.pkg` from `/packages/` path on repo server, writes to `/mnt/<pkg>`
-- **`kpm remove <pkg>`** — unchanged, works as before
-- **`kpm repo` without args** — shows current repository URL or prompts to set one
+### Networking + KPM (Phase 2)
+- Real TCP socket support via Linux kernel (`socket()`, `connect()`, `send()`, `recv()`)
+- **`net <url>`** — raw HTTP GET request for debugging
+- **`kpm repo <url>`** — set package repository URL
+- **`kpm list`** — fetches `packages.json` from repo, shows available packages
+- **`kpm install <pkg>`** — downloads `.pkg` file from repo over HTTP
+- **`kpm update`** — refreshes package list from remote
+- **`kpm repo`** — shows current repository URL
+- QEMU user-mode networking: `-netdev user,id=net0 -device e1000,netdev=net0`
 
-### Previous Changes (Carried Forward)
-- v2.7.6: Git hygiene + GUI architecture review, TXT.txt in .gitignore
-- v2.7.5: Multi-language support (C, Python, JS, Purr++, Shell), custom kernel syscalls
-
----
-
-## v2.7.5 — Multi-Language + Custom Kernel Edition (2026-07-24)
+### Previous versions
+- v2.7.7: Networking + Real KPM
+- v2.7.6: Git hygiene + GUI architecture review
+- v2.7.5: Multi-language support, custom kernel syscalls
 
 ### Architecture Change
 - **Option B implemented**: Custom Linux kernel with Keke-specific syscalls
