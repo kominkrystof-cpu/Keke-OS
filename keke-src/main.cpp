@@ -1370,6 +1370,91 @@ private:
         }
         return -1;
     }
+
+    // Track background jobs
+    struct BackgroundJob {
+        pid_t pid;
+        std::string command;
+        bool running;
+    };
+    std::vector<BackgroundJob> bg_jobs;
+
+    // Execute with pipe: cmd1 | cmd2
+    int executePipe(const std::string& cmd1, const std::string& cmd2) {
+        int pipefd[2];
+        if (pipe(pipefd) < 0) {
+            std::cout << Colors::RED << "Pipe error" << Colors::RESET << "\n";
+            return -1;
+        }
+
+        pid_t pid1 = fork();
+        if (pid1 == 0) {
+            // Child 1: write to pipe
+            close(pipefd[0]);
+            dup2(pipefd[1], STDOUT_FILENO);
+            close(pipefd[1]);
+            execl("/bin/sh", "sh", "-c", cmd1.c_str(), nullptr);
+            exit(1);
+        }
+
+        pid_t pid2 = fork();
+        if (pid2 == 0) {
+            // Child 2: read from pipe
+            close(pipefd[1]);
+            dup2(pipefd[0], STDIN_FILENO);
+            close(pipefd[0]);
+            execl("/bin/sh", "sh", "-c", cmd2.c_str(), nullptr);
+            exit(1);
+        }
+
+        // Parent: close pipe, wait for both
+        close(pipefd[0]);
+        close(pipefd[1]);
+        int status;
+        waitpid(pid1, &status, 0);
+        waitpid(pid2, &status, 0);
+        return WEXITSTATUS(status);
+    }
+
+    // Execute with output redirection: cmd > file
+    int executeRedirect(const std::string& cmd, const std::string& file, bool append) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            int fd;
+            if (append) {
+                fd = open(file.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+            } else {
+                fd = open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            }
+            if (fd < 0) {
+                std::cout << Colors::RED << "Cannot open file: " << file << Colors::RESET << "\n";
+                exit(1);
+            }
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+            exit(1);
+        } else if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+            return WEXITSTATUS(status);
+        }
+        return -1;
+    }
+
+    // Execute command in background
+    pid_t executeBackground(const std::string& cmd) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Child: detach from terminal
+            setsid();
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
+            exit(1);
+        } else if (pid > 0) {
+            return pid;
+        }
+        return -1;
+    }
     
     // Password input with masking (using termios for Linux)
     std::string readPasswordPrompt(const std::string& prompt) {
@@ -1489,10 +1574,53 @@ public:
                 size_t space_pos = input.find(' ');
                 std::string cmd = (space_pos == std::string::npos) ? input : input.substr(0, space_pos);
                 std::string arg = (space_pos == std::string::npos) ? "" : input.substr(space_pos + 1);
-                
+
+                // Handle pipe: cmd1 | cmd2
+                size_t pipe_pos = arg.find('|');
+                if (pipe_pos != std::string::npos) {
+                    std::string cmd1 = arg.substr(0, pipe_pos);
+                    std::string cmd2 = arg.substr(pipe_pos + 1);
+                    while (!cmd1.empty() && cmd1.back() == ' ') cmd1.pop_back();
+                    while (!cmd2.empty() && cmd2.front() == ' ') cmd2.erase(cmd2.begin());
+                    executePipe(cmd1, cmd2);
+                    continue;
+                }
+
+                // Handle output redirect: cmd > file  or  cmd >> file
+                size_t app_pos = arg.find(">>");
+                size_t redir_pos = arg.find('>');
+                if (app_pos != std::string::npos || (redir_pos != std::string::npos && redir_pos != (arg.length() - 1) && arg[redir_pos + 1] == '>')) {
+                    size_t pos = (app_pos != std::string::npos) ? app_pos : redir_pos;
+                    bool append = (arg[pos + 1] == '>');
+                    std::string cmd_str = arg.substr(0, pos);
+                    std::string file = arg.substr(pos + (append ? 2 : 1));
+                    while (!cmd_str.empty() && cmd_str.back() == ' ') cmd_str.pop_back();
+                    while (!file.empty() && file.front() == ' ') file.erase(file.begin());
+                    while (!file.empty() && file.back() == ' ') file.pop_back();
+                    executeRedirect(cmd_str, file, append);
+                    continue;
+                }
+                else if (redir_pos != std::string::npos && redir_pos > 0 && arg[redir_pos - 1] != '>') {
+                    std::string cmd_str = arg.substr(0, redir_pos);
+                    std::string file = arg.substr(redir_pos + 1);
+                    while (!cmd_str.empty() && cmd_str.back() == ' ') cmd_str.pop_back();
+                    while (!file.empty() && file.front() == ' ') file.erase(file.begin());
+                    while (!file.empty() && file.back() == ' ') file.pop_back();
+                    executeRedirect(cmd_str, file, false);
+                    continue;
+                }
+
+                // Handle background: cmd &
+                bool background = false;
+                if (!arg.empty() && arg.back() == '&') {
+                    arg.pop_back();
+                    while (!arg.empty() && arg.back() == ' ') arg.pop_back();
+                    background = true;
+                }
+
                 // Built-in commands from kernel.c
                 if (strcmp_custom(cmd.c_str(), "help") == 0) {
-                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, kpm, gui, color, cursor, origin, windows, keke_info, keketool");
+                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, cp, mv, chmod, find, grep, kpm, net, gui, color, cursor, origin, windows, keke_info, keketool, jobs, fg, bg");
                 }
                 else if (strcmp_custom(cmd.c_str(), "ver") == 0) {
                     std::cout << Colors::CYAN << "--------------------------------------------\n";
@@ -1537,6 +1665,64 @@ public:
                 }
                 else if (strcmp_custom(cmd.c_str(), "touch") == 0) {
                     cmdTouch(arg);
+                }
+                else if (strcmp_custom(cmd.c_str(), "cp") == 0) {
+                    if (arg.empty()) {
+                        printError("Použití: cp <zdroj> <cíl>");
+                    } else {
+                        executeExternal("cp " + arg);
+                    }
+                }
+                else if (strcmp_custom(cmd.c_str(), "mv") == 0) {
+                    if (arg.empty()) {
+                        printError("Použití: mv <zdroj> <cíl>");
+                    } else {
+                        executeExternal("mv " + arg);
+                    }
+                }
+                else if (strcmp_custom(cmd.c_str(), "chmod") == 0) {
+                    if (arg.empty()) {
+                        printError("Použití: chmod <mood> <soubor>");
+                    } else {
+                        executeExternal("chmod " + arg);
+                    }
+                }
+                else if (strcmp_custom(cmd.c_str(), "find") == 0) {
+                    executeExternal("find " + (arg.empty() ? "." : arg));
+                }
+                else if (strcmp_custom(cmd.c_str(), "grep") == 0) {
+                    executeExternal("grep " + arg);
+                }
+                else if (strcmp_custom(cmd.c_str(), "jobs") == 0) {
+                    if (bg_jobs.empty()) {
+                        std::cout << Colors::CYAN << "Žádné běžící pozadí úlohy.\n" << Colors::RESET;
+                    } else {
+                        std::cout << Colors::CYAN << "Pozadí úlohy:\n" << Colors::RESET;
+                        for (size_t i = 0; i < bg_jobs.size(); i++) {
+                            const auto& job = bg_jobs[i];
+                            std::cout << "  [" << (i + 1) << "]  " << job.pid << "  " << (job.running ? "běží" : "dokončeno") << "  " << job.command << "\n";
+                        }
+                    }
+                }
+                else if (strcmp_custom(cmd.c_str(), "fg") == 0) {
+                    if (bg_jobs.empty()) {
+                        printError("Žádné pozadí úlohy.");
+                    } else {
+                        // Bring last job to foreground
+                        auto& job = bg_jobs.back();
+                        int status;
+                        std::cout << Colors::YELLOW << "Foreground: " << job.command << " (PID " << job.pid << ")\n" << Colors::RESET;
+                        waitpid(job.pid, &status, WUNTRACED);
+                        job.running = false;
+                        bg_jobs.erase(bg_jobs.end() - 1);
+                    }
+                }
+                else if (strcmp_custom(cmd.c_str(), "bg") == 0) {
+                    if (bg_jobs.empty()) {
+                        printError("Žádné pozadí úlohy.");
+                    } else {
+                        std::cout << Colors::YELLOW << "Všechny pozadí úlohy běží.\n" << Colors::RESET;
+                    }
                 }
                 else if (strcmp_custom(cmd.c_str(), "kpm") == 0) {
                     cmdKpm(arg);
@@ -1662,10 +1848,31 @@ public:
                     bool found = false;
                     for (auto& p : paths) {
                         if (stat(p.c_str(), &ext_st) == 0 && S_ISREG(ext_st.st_mode) && (ext_st.st_mode & S_IXUSR)) {
-                            executeExternal(p);
+                            if (background) {
+                                pid_t bg_pid = executeBackground(p + " " + arg);
+                                if (bg_pid > 0) {
+                                    bg_jobs.push_back({bg_pid, p, true});
+                                    std::cout << Colors::YELLOW << "[bg] " << bg_pid << " " << cmd << "\n" << Colors::RESET;
+                                }
+                            } else {
+                                executeExternal(p);
+                            }
                             found = true;
                             break;
                         }
+                    }
+                    // Also try cmd + arg as a single shell command
+                    if (!found && !cmd.empty()) {
+                        if (background) {
+                            pid_t bg_pid = executeBackground(cmd + " " + arg);
+                            if (bg_pid > 0) {
+                                bg_jobs.push_back({bg_pid, cmd + " " + arg, true});
+                                std::cout << Colors::YELLOW << "[bg] " << bg_pid << " " << cmd << "\n" << Colors::RESET;
+                            }
+                        } else {
+                            executeExternal(cmd + " " + arg);
+                        }
+                        found = true;
                     }
                     if (!found) {
                         std::cout << Colors::RED << "-kekeShell: " << input << ": command not found\n" << Colors::RESET;
@@ -1676,6 +1883,17 @@ public:
                 input.clear();
                 cmd.clear();
                 arg.clear();
+
+                // Clean up finished background jobs
+                for (auto it = bg_jobs.begin(); it != bg_jobs.end();) {
+                    int status;
+                    pid_t result = waitpid(it->pid, &status, WNOHANG);
+                    if (result > 0) {
+                        it = bg_jobs.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
             }
         }
     }
