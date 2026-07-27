@@ -250,7 +250,7 @@ public:
         }
     }
     
-    // Simple 8x8 bitmap font for text rendering
+// Simple 8x8 bitmap font for text rendering
     void drawChar(int x, int y, char c, unsigned char r, unsigned char g, unsigned char b) {
         // Simple 8x8 font data for basic characters
         static const unsigned char font[][8] = {
@@ -315,20 +315,22 @@ public:
             {0x7F,0x63,0x31,0x18,0x4C,0x66,0x7F,0x00}, // Z (90)
         };
         
-        // Map lowercase to uppercase (a-z → A-Z)
+        // Map lowercase to uppercase (a-z -> A-Z)
         unsigned char uc = (unsigned char)c;
         if (uc >= 'a' && uc <= 'z') {
-            uc = uc - 32; // Convert to uppercase
+            uc = uc - 32;
         }
         
-        // Check valid range: chars 32 (space) through 90 (Z) → indices 0-58
+        // Valid range: chars 32 (space) through 90 (Z) -> indices 0-58
         int char_index = uc - 32;
         if (char_index < 0 || char_index > 58) {
-            char_index = 0; // Default to space for unknown chars
+            char_index = 0; // Default to space
         }
         
+        // Draw font bitmap: row 0 = top of character
+        // Framebuffer setPixel handles Y-flip if needed
         for (int row = 0; row < 8; row++) {
-            unsigned char font_row = font[char_index][7 - row];
+            unsigned char font_row = font[char_index][row];
             for (int col = 0; col < 8; col++) {
                 if (font_row & (1 << (7 - col))) {
                     setPixel(x + col, y + row, r, g, b);
