@@ -1937,57 +1937,90 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko not found - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
     }
 
-    // Setup networking (QEMU user-mode: eth0 = 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3)
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock >= 0) {
-        // Bring up eth0
-        struct ifreq ifr;
-        memset(&ifr, 0, sizeof(ifr));
-        strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
-        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
-            ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
-            if (ioctl(sock, SIOCSIFFLAGS, &ifr) == 0) {
-                // Assign static IP 10.0.2.15/24
+    // Setup networking by enumerating interfaces dynamically
+    // Reads /sys/class/net/ to find interfaces, skips loopback
+    // Configures first non-loopback interface with static IP (QEMU: 10.0.2.15)
+    int net_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (net_sock >= 0) {
+        DIR *netdir = opendir("/sys/class/net");
+        if (netdir) {
+            struct dirent *entry;
+            bool network_ok = false;
+            while ((entry = readdir(netdir)) != nullptr) {
+                // Skip loopback and special entries
+                if (strcmp(entry->d_name, "lo") == 0) continue;
+                if (entry->d_name[0] == '.') continue;
+
+                // Skip if not a directory (symlinks are fine, check if it's an interface)
+                char ifpath[256];
+                snprintf(ifpath, sizeof(ifpath), "/sys/class/net/%s", entry->d_name);
+                struct stat ifstat;
+                if (stat(ifpath, &ifstat) != 0 || !S_ISDIR(ifstat.st_mode)) continue;
+
+                // Found a real interface — bring it up and configure it
+                std::cout << Colors::CYAN << "[NET] Found interface: " << entry->d_name << Colors::RESET << "\n";
+
+                struct ifreq ifr;
+                memset(&ifr, 0, sizeof(ifr));
+                strncpy(ifr.ifr_name, entry->d_name, IFNAMSIZ - 1);
+
+                // Read current flags
+                if (ioctl(net_sock, SIOCGIFFLAGS, &ifr) < 0) {
+                    std::cout << Colors::YELLOW << "[WARNING] Could not read flags for " << entry->d_name << Colors::RESET << "\n";
+                    continue;
+                }
+
+                // Bring interface up
+                ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+                if (ioctl(net_sock, SIOCSIFFLAGS, &ifr) < 0) {
+                    std::cout << Colors::YELLOW << "[WARNING] Failed to bring up " << entry->d_name << Colors::RESET << "\n";
+                    continue;
+                }
+
+                // Assign static IP 10.0.2.15/24 (QEMU user-mode networking)
                 struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
                 addr->sin_family = AF_INET;
                 addr->sin_addr.s_addr = inet_addr("10.0.2.15");
-                ioctl(sock, SIOCSIFADDR, &ifr);
+                if (ioctl(net_sock, SIOCSIFADDR, &ifr) < 0) {
+                    std::cout << Colors::YELLOW << "[WARNING] Could not set IP for " << entry->d_name << Colors::RESET << "\n";
+                    continue;
+                }
 
                 // Set subnet mask 255.255.255.0
                 addr->sin_addr.s_addr = inet_addr("255.255.255.0");
-                ioctl(sock, SIOCSIFNETMASK, &ifr);
+                 ioctl(net_sock, SIOCSIFNETMASK, &ifr);
 
-                std::cout << Colors::GREEN << "[OK] Network configured: eth0=10.0.2.15" << Colors::RESET << "\n";
-            } else {
-                std::cout << Colors::YELLOW << "[WARNING] Failed to bring up eth0" << Colors::RESET << "\n";
+                 // Setup default route via 10.0.2.2 (QEMU NAT gateway)
+                 struct rtentry rt;
+                 memset(&rt, 0, sizeof(rt));
+                 struct sockaddr_in *rt_dest = (struct sockaddr_in *)&rt.rt_dst;
+                 rt_dest->sin_family = AF_INET;
+                 rt_dest->sin_addr.s_addr = inet_addr("0.0.0.0");
+                 struct sockaddr_in *rt_gw = (struct sockaddr_in *)&rt.rt_gateway;
+                 rt_gw->sin_family = AF_INET;
+                 rt_gw->sin_addr.s_addr = inet_addr("10.0.2.2");
+                 struct sockaddr_in *rt_genmask = (struct sockaddr_in *)&rt.rt_genmask;
+                 rt_genmask->sin_family = AF_INET;
+                 rt_genmask->sin_addr.s_addr = inet_addr("0.0.0.0");
+                 rt.rt_flags = RTF_UP | RTF_GATEWAY;
+                 if (ioctl(net_sock, SIOCADDRT, &rt) < 0) {
+                     // Route setup failed — may still work if QEMU handles routing
+                 } else {
+                     std::cout << Colors::GREEN << "[OK] Default route via 10.0.2.2" << Colors::RESET << "\n";
+                 }
+
+                std::cout << Colors::GREEN << "[OK] Network configured: " << entry->d_name << "=10.0.2.15" << Colors::RESET << "\n";
+                network_ok = true;
+                break;  // Configure first real interface only for now
+            }
+            closedir(netdir);
+            if (!network_ok) {
+                std::cout << Colors::YELLOW << "[WARNING] No network interface found" << Colors::RESET << "\n";
             }
         } else {
-            std::cout << Colors::YELLOW << "[WARNING] eth0 not found (no network in QEMU?)" << Colors::RESET << "\n";
+            std::cout << Colors::YELLOW << "[WARNING] Could not enumerate /sys/class/net/ (kernel may not support it)" << Colors::RESET << "\n";
         }
-
-        // Setup default route via 10.0.2.2
-        int rt_sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (rt_sock >= 0) {
-            struct rtentry rt;
-            memset(&rt, 0, sizeof(rt));
-            struct sockaddr_in *rt_dest = (struct sockaddr_in *)&rt.rt_dst;
-            rt_dest->sin_family = AF_INET;
-            rt_dest->sin_addr.s_addr = inet_addr("0.0.0.0");
-            struct sockaddr_in *rt_gw = (struct sockaddr_in *)&rt.rt_gateway;
-            rt_gw->sin_family = AF_INET;
-            rt_gw->sin_addr.s_addr = inet_addr("10.0.2.2");
-            struct sockaddr_in *rt_genmask = (struct sockaddr_in *)&rt.rt_genmask;
-            rt_genmask->sin_family = AF_INET;
-            rt_genmask->sin_addr.s_addr = inet_addr("0.0.0.0");
-            rt.rt_flags = RTF_UP | RTF_GATEWAY;
-            if (ioctl(rt_sock, SIOCADDRT, &rt) < 0) {
-                std::cout << Colors::YELLOW << "[WARNING] Could not set default route (may work without it)" << Colors::RESET << "\n";
-            } else {
-                std::cout << Colors::GREEN << "[OK] Default route via 10.0.2.2" << Colors::RESET << "\n";
-            }
-            close(rt_sock);
-        }
-        close(sock);
+        close(net_sock);
 
         // Setup DNS resolver (QEMU user-mode DNS = 10.0.2.3)
         mkdir("/etc", 0755);
