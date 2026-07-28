@@ -103,6 +103,22 @@ else
     fi
 fi
 
+# Copy e1000 network driver module for QEMU user-mode networking
+echo "[Keke OS] Copying e1000 network driver module..."
+E1000_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst"
+if [ -f "$E1000_MODULE_SRC" ]; then
+    zstd -d "$E1000_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/e1000.ko" -f 2>/dev/null
+    echo "[Keke OS] Copied e1000.ko (from .zst)"
+else
+    E1000_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"
+    if [ -f "$E1000_MODULE_SRC" ]; then
+        cp "$E1000_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/e1000.ko"
+        echo "[Keke OS] Copied e1000.ko"
+    else
+        echo "[Keke OS] Warning: e1000.ko not found, network will not work"
+    fi
+fi
+
 # Create the initramfs archive
 echo "[Keke OS] Creating initramfs archive..."
 cd "$INITRAMFS_DIR"

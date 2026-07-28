@@ -1945,6 +1945,13 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko not found - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
     }
 
+    // Load e1000 network driver for QEMU user-mode networking (device e1000)
+    if (loadKernelModule("/lib/modules/e1000.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] e1000 network driver loaded" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] e1000.ko not found - network interface won't be available" << Colors::RESET << "\n";
+    }
+
     // Setup networking by enumerating interfaces dynamically
     // Reads /sys/class/net/ to find interfaces, skips loopback
     // Configures first non-loopback interface with static IP (QEMU: 10.0.2.15)
