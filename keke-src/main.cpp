@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <sstream>
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
@@ -389,6 +390,225 @@ namespace Colors {
     const std::string BG_WHITE = "\033[47m";
 }
 
+struct DhcpResult {
+    bool success;
+    char ip[16];
+    char mask[16];
+    char gateway[16];
+    char dns[16];
+    uint32_t lease_seconds;
+};
+
+DhcpResult dhcpDiscover(const char* interface) {
+    DhcpResult result;
+    memset(&result, 0, sizeof(result));
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cout << Colors::YELLOW << "[DHCP] Could not create UDP socket" << Colors::RESET << "\n";
+        return result;
+    }
+
+    struct timeval tv;
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct sockaddr_in client_addr;
+    memset(&client_addr, 0, sizeof(client_addr));
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_port = htons(68);
+    client_addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(sock, (struct sockaddr*)&client_addr, sizeof(client_addr)) < 0) {
+        std::cout << Colors::YELLOW << "[DHCP] Could not bind to port 68" << Colors::RESET << "\n";
+        close(sock);
+        return result;
+    }
+
+    int broadcast = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+    setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, interface, strlen(interface) + 1);
+
+    uint8_t packet[548];
+    memset(packet, 0, sizeof(packet));
+
+    packet[0] = 1;
+    packet[1] = 1;
+    packet[2] = 6;
+    uint32_t xid = (uint32_t)time(nullptr) ^ (uint32_t)getpid();
+    memcpy(&packet[4], &xid, 4);
+
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, interface, IFNAMSIZ - 1);
+    if (ioctl(sock, SIOCGIFHWADDR, &ifr) == 0) {
+        memcpy(&packet[28], ifr.ifr_hwaddr.sa_data, 6);
+    }
+
+    packet[236] = 0x63;
+    packet[237] = 0x82;
+    packet[238] = 0x53;
+    packet[239] = 0x63;
+
+    packet[240] = 53;
+    packet[241] = 1;
+    packet[242] = 1;
+
+    packet[243] = 0xFF;
+
+    struct sockaddr_in broadcast_addr;
+    memset(&broadcast_addr, 0, sizeof(broadcast_addr));
+    broadcast_addr.sin_family = AF_INET;
+    broadcast_addr.sin_port = htons(67);
+    broadcast_addr.sin_addr.s_addr = INADDR_BROADCAST;
+
+    if (sendto(sock, packet, 244, 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
+        std::cout << Colors::YELLOW << "[DHCP] Failed to send DHCPDISCOVER" << Colors::RESET << "\n";
+        close(sock);
+        return result;
+    }
+    std::cout << Colors::CYAN << "[DHCP] Sent DHCPDISCOVER on " << interface << "..." << Colors::RESET << "\n";
+
+    uint8_t offer[548];
+    for (int retry = 0; retry < 3; retry++) {
+        int n = recv(sock, offer, sizeof(offer), 0);
+        if (n < 244) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                std::cout << Colors::YELLOW << "[DHCP] Timeout waiting for DHCPOFFER, retrying..." << Colors::RESET << "\n";
+                sendto(sock, packet, 244, 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr));
+                continue;
+            }
+            continue;
+        }
+
+        uint32_t resp_xid;
+        memcpy(&resp_xid, &offer[4], 4);
+        if (resp_xid != xid) continue;
+
+        if (offer[240] != 53 || offer[242] != 2) continue;
+
+        struct in_addr offered_ip;
+        memcpy(&offered_ip, &offer[16], 4);
+        char offered_ip_str[16];
+        inet_ntop(AF_INET, &offered_ip, offered_ip_str, sizeof(offered_ip_str));
+        std::cout << Colors::CYAN << "[DHCP] Received DHCPOFFER: " << offered_ip_str << Colors::RESET << "\n";
+
+        uint32_t server_id = 0;
+        int opt_pos = 240;
+        while (opt_pos < n) {
+            if (offer[opt_pos] == 0xFF) break;
+            if (offer[opt_pos] == 0) { opt_pos++; continue; }
+            int opt_code = offer[opt_pos];
+            int opt_len = offer[opt_pos + 1];
+            if (opt_code == 54 && opt_len == 4) {
+                memcpy(&server_id, &offer[opt_pos + 2], 4);
+            }
+            opt_pos += 2 + opt_len;
+        }
+
+        memset(packet, 0, sizeof(packet));
+        packet[0] = 1;
+        packet[1] = 1;
+        packet[2] = 6;
+        xid ^= 0xDEADBEEF;
+        memcpy(&packet[4], &xid, 4);
+        if (ioctl(sock, SIOCGIFHWADDR, &ifr) == 0) {
+            memcpy(&packet[28], ifr.ifr_hwaddr.sa_data, 6);
+        }
+
+        packet[236] = 0x63;
+        packet[237] = 0x82;
+        packet[238] = 0x53;
+        packet[239] = 0x63;
+
+        packet[240] = 53;
+        packet[241] = 1;
+        packet[242] = 3;
+
+        packet[243] = 50;
+        packet[244] = 4;
+        memcpy(&packet[245], &offered_ip, 4);
+
+        int req_opt_pos = 249;
+        if (server_id != 0) {
+            packet[req_opt_pos] = 54;
+            packet[req_opt_pos + 1] = 4;
+            memcpy(&packet[req_opt_pos + 2], &server_id, 4);
+            req_opt_pos += 6;
+        }
+
+        packet[req_opt_pos] = 0xFF;
+
+        if (sendto(sock, packet, req_opt_pos + 1, 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
+            std::cout << Colors::YELLOW << "[DHCP] Failed to send DHCPREQUEST" << Colors::RESET << "\n";
+            close(sock);
+            return result;
+        }
+        std::cout << Colors::CYAN << "[DHCP] Sent DHCPREQUEST for " << offered_ip_str << Colors::RESET << "\n";
+
+        for (int retry2 = 0; retry2 < 3; retry2++) {
+            int n2 = recv(sock, offer, sizeof(offer), 0);
+            if (n2 < 244) {
+                if (n2 < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    std::cout << Colors::YELLOW << "[DHCP] Timeout waiting for DHCPACK, retrying..." << Colors::RESET << "\n";
+                    sendto(sock, packet, req_opt_pos + 1, 0, (struct sockaddr*)&broadcast_addr, sizeof(broadcast_addr));
+                    continue;
+                }
+                continue;
+            }
+
+            memcpy(&resp_xid, &offer[4], 4);
+            if (resp_xid != xid) continue;
+
+            if (offer[240] != 53 || offer[242] != 5) continue;
+
+            result.success = true;
+            struct in_addr ack_ip;
+            memcpy(&ack_ip, &offer[16], 4);
+            inet_ntop(AF_INET, &ack_ip, result.ip, sizeof(result.ip));
+
+            opt_pos = 240;
+            while (opt_pos < n2) {
+                if (offer[opt_pos] == 0xFF) break;
+                if (offer[opt_pos] == 0) { opt_pos++; continue; }
+                int code = offer[opt_pos];
+                int len = offer[opt_pos + 1];
+                uint8_t* val = &offer[opt_pos + 2];
+
+                if (code == 1 && len == 4) {
+                    struct in_addr m;
+                    memcpy(&m, val, 4);
+                    inet_ntop(AF_INET, &m, result.mask, sizeof(result.mask));
+                } else if (code == 3 && len >= 4) {
+                    struct in_addr gw;
+                    memcpy(&gw, val, 4);
+                    inet_ntop(AF_INET, &gw, result.gateway, sizeof(result.gateway));
+                } else if (code == 6 && len >= 4) {
+                    struct in_addr dns;
+                    memcpy(&dns, val, 4);
+                    inet_ntop(AF_INET, &dns, result.dns, sizeof(result.dns));
+                } else if (code == 51 && len == 4) {
+                    memcpy(&result.lease_seconds, val, 4);
+                    result.lease_seconds = ntohl(result.lease_seconds);
+                }
+                opt_pos += 2 + len;
+            }
+
+            std::cout << Colors::GREEN << "[DHCP] Received DHCPACK" << Colors::RESET << "\n";
+            close(sock);
+            return result;
+        }
+
+        std::cout << Colors::YELLOW << "[DHCP] No DHCPACK received" << Colors::RESET << "\n";
+        close(sock);
+        return result;
+    }
+
+    std::cout << Colors::YELLOW << "[DHCP] No DHCPOFFER received after retries" << Colors::RESET << "\n";
+    close(sock);
+    return result;
+}
+
 class KekeShell {
 private:
     static constexpr int HISTORY_SIZE = 5;
@@ -636,7 +856,7 @@ private:
             return;
         }
         
-        std::string full_path = current_dir + "/" + arg;
+        std::string full_path = normalizePath(current_dir, arg);
         
         if (mkdir(full_path.c_str(), 0755) != 0) {
             std::cout << Colors::RED << "Nepodařilo se vytvořit adresář" << Colors::RESET << "\n";
@@ -655,7 +875,7 @@ private:
             return;
         }
         
-        std::string full_path = current_dir + "/" + arg;
+        std::string full_path = normalizePath(current_dir, arg);
         
         // Try to open file
         int fd = open(full_path.c_str(), O_RDONLY);
@@ -682,7 +902,7 @@ private:
             return;
         }
         
-        std::string full_path = current_dir + "/" + arg;
+        std::string full_path = normalizePath(current_dir, arg);
         
         // First try unlink for regular files
         if (unlink(full_path.c_str()) == 0) {
@@ -707,7 +927,7 @@ private:
             return;
         }
         
-        std::string full_path = current_dir + "/" + arg;
+        std::string full_path = normalizePath(current_dir, arg);
         
         // Create file with O_CREAT | O_WRONLY
         int fd = open(full_path.c_str(), O_CREAT | O_WRONLY, 0644);
@@ -719,7 +939,231 @@ private:
         close(fd);
         std::cout << Colors::GREEN << "Soubor vytvořen" << Colors::RESET << "\n";
     }
-    
+
+    // IFCONFIG command - show/set network interfaces (native, no /bin/sh needed)
+    void cmdIfconfig(const std::string& arg) {
+        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            std::cout << Colors::RED << "Nepodařilo se vytvořit socket" << Colors::RESET << "\n";
+            return;
+        }
+
+        if (arg.empty()) {
+            // List all interfaces from /sys/class/net/
+            DIR* dir = opendir("/sys/class/net");
+            if (!dir) {
+                std::cout << Colors::RED << "Nepodařilo se otevřít /sys/class/net" << Colors::RESET << "\n";
+                close(sock);
+                return;
+            }
+
+            struct dirent* entry;
+            bool found = false;
+            while ((entry = readdir(dir)) != nullptr) {
+                if (entry->d_name[0] == '.') continue;
+
+                struct ifreq ifr;
+                memset(&ifr, 0, sizeof(ifr));
+                strncpy(ifr.ifr_name, entry->d_name, IFNAMSIZ - 1);
+
+                std::cout << Colors::BRIGHT_CYAN << entry->d_name << Colors::RESET << ": ";
+
+                // Get flags
+                if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+                    std::cout << ((ifr.ifr_flags & IFF_UP) ? "UP" : "DOWN") << " ";
+                    std::cout << ((ifr.ifr_flags & IFF_RUNNING) ? "RUNNING" : "");
+                }
+                std::cout << "\n";
+
+                // Get IP
+                if (ioctl(sock, SIOCGIFADDR, &ifr) == 0) {
+                    struct sockaddr_in* addr = (struct sockaddr_in*)&ifr.ifr_addr;
+                    char ip[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
+                    std::cout << "  inet " << ip;
+                }
+
+                // Get netmask
+                if (ioctl(sock, SIOCGIFNETMASK, &ifr) == 0) {
+                    struct sockaddr_in* mask = (struct sockaddr_in*)&ifr.ifr_addr;
+                    char msk[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &mask->sin_addr, msk, sizeof(msk));
+                    std::cout << "  netmask " << msk;
+                }
+
+                // Get broadcast
+                if (ioctl(sock, SIOCGIFBRDADDR, &ifr) == 0) {
+                    struct sockaddr_in* brd = (struct sockaddr_in*)&ifr.ifr_addr;
+                    char bcast[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &brd->sin_addr, bcast, sizeof(bcast));
+                    std::cout << "  broadcast " << bcast;
+                }
+                std::cout << "\n";
+
+                // Get MAC
+                if (ioctl(sock, SIOCGIFHWADDR, &ifr) == 0) {
+                    unsigned char* mac = (unsigned char*)ifr.ifr_hwaddr.sa_data;
+                    printf("  ether %02x:%02x:%02x:%02x:%02x:%02x\n",
+                           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                }
+
+                found = true;
+            }
+            closedir(dir);
+            if (!found) {
+                std::cout << Colors::YELLOW << "Žádné síťové rozhraní" << Colors::RESET << "\n";
+            }
+        } else {
+            // Show specific interface or set address
+            // Parse args: "ifconfig <iface>" or "ifconfig <iface> <ip> <mask>"
+            std::istringstream iss(arg);
+            std::string iface_name, ip_str, mask_str;
+            iss >> iface_name >> ip_str >> mask_str;
+
+            if (ip_str.empty()) {
+                // Just show info for this interface
+                struct ifreq ifr;
+                memset(&ifr, 0, sizeof(ifr));
+                strncpy(ifr.ifr_name, iface_name.c_str(), IFNAMSIZ - 1);
+
+                std::cout << Colors::BRIGHT_CYAN << iface_name << Colors::RESET << ": ";
+
+                if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+                    std::cout << ((ifr.ifr_flags & IFF_UP) ? "UP" : "DOWN") << " ";
+                    std::cout << ((ifr.ifr_flags & IFF_RUNNING) ? "RUNNING" : "");
+                }
+                std::cout << "\n";
+
+                if (ioctl(sock, SIOCGIFADDR, &ifr) == 0) {
+                    struct sockaddr_in* addr = (struct sockaddr_in*)&ifr.ifr_addr;
+                    char ip[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip));
+                    std::cout << "  inet " << ip;
+                }
+                if (ioctl(sock, SIOCGIFNETMASK, &ifr) == 0) {
+                    struct sockaddr_in* m = (struct sockaddr_in*)&ifr.ifr_addr;
+                    char msk[INET_ADDRSTRLEN];
+                    inet_ntop(AF_INET, &m->sin_addr, msk, sizeof(msk));
+                    std::cout << "  netmask " << msk;
+                }
+                std::cout << "\n";
+            } else {
+                // Set IP address: ifconfig <iface> <ip> <mask>
+                struct ifreq ifr;
+                memset(&ifr, 0, sizeof(ifr));
+                strncpy(ifr.ifr_name, iface_name.c_str(), IFNAMSIZ - 1);
+
+                // Set IP
+                struct sockaddr_in* addr = (struct sockaddr_in*)&ifr.ifr_addr;
+                addr->sin_family = AF_INET;
+                inet_pton(AF_INET, ip_str.c_str(), &addr->sin_addr);
+                if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
+                    std::cout << Colors::RED << "Nepodařilo se nastavit IP adresu" << Colors::RESET << "\n";
+                    close(sock);
+                    return;
+                }
+
+                // Set netmask if provided
+                if (!mask_str.empty()) {
+                    inet_pton(AF_INET, mask_str.c_str(), &addr->sin_addr);
+                    if (ioctl(sock, SIOCSIFNETMASK, &ifr) < 0) {
+                        std::cout << Colors::RED << "Nepodařilo se nastavit masku sítě" << Colors::RESET << "\n";
+                        close(sock);
+                        return;
+                    }
+                }
+
+                // Bring interface up
+                if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+                    ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+                    ioctl(sock, SIOCSIFFLAGS, &ifr);
+                }
+
+                std::cout << Colors::GREEN << "Rozhraní " << iface_name << " nastaveno: " << ip_str << Colors::RESET << "\n";
+            }
+        }
+        close(sock);
+    }
+
+    // ROUTE command - show kernel routing table (native, parses /proc/net/route)
+    void cmdRoute(const std::string& arg) {
+        int fd = open("/proc/net/route", O_RDONLY);
+        if (fd < 0) {
+            std::cout << Colors::RED << "Nepodařilo se otevřít /proc/net/route" << Colors::RESET << "\n";
+            return;
+        }
+
+        std::cout << Colors::BRIGHT_CYAN << "Kernel IP routing table" << Colors::RESET << "\n";
+        printf("%-16s %-16s %-16s %-6s %s\n", "Destination", "Gateway", "Genmask", "Flags", "Iface");
+        printf("%-16s %-16s %-16s %-6s %s\n", "-----------", "-------", "-------", "-----", "-----");
+
+        char buffer[4096];
+        ssize_t bytes = read(fd, buffer, sizeof(buffer) - 1);
+        close(fd);
+
+        if (bytes <= 0) return;
+        buffer[bytes] = '\0';
+
+        // Skip header line
+        char* line = strchr(buffer, '\n');
+        if (!line) return;
+        line++;
+
+        while (*line) {
+            // Skip leading whitespace
+            while (*line == ' ' || *line == '\t') line++;
+            if (*line == '\0' || *line == '\n') break;
+
+            // Parse: Iface Destination Gateway Flags ...
+            char iface[16] = {};
+            unsigned long dest = 0, gw = 0, mask_val = 0;
+            int flags = 0;
+
+            int n = sscanf(line, "%15s %lx %lx %x", iface, &dest, &gw, &flags);
+            if (n < 4) break;
+
+            // Also get genmask from the 4th field
+            // /proc/net/route format: Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
+            // Mask is the 8th field, let's re-parse
+            char line_copy[512] = {};
+            char* nl = (char*)memchr(line, '\n', 512);
+            size_t line_len = nl ? (size_t)(nl - line) : strlen(line);
+            if (line_len >= sizeof(line_copy)) line_len = sizeof(line_copy) - 1;
+            memcpy(line_copy, line, line_len);
+            line_copy[line_len] = '\0';
+
+            char ifn[16] = {};
+            unsigned long d = 0, g = 0, m = 0;
+            int fl = 0;
+            int refcnt = 0, use = 0, metric = 0;
+            sscanf(line_copy, "%15s %lx %lx %x %d %d %d %lx", ifn, &d, &g, &fl, &refcnt, &use, &metric, &m);
+
+            // Format addresses
+            struct in_addr d_addr, g_addr, m_addr;
+            d_addr.s_addr = d;
+            g_addr.s_addr = g;
+            m_addr.s_addr = m;
+
+            char dest_str[INET_ADDRSTRLEN], gw_str[INET_ADDRSTRLEN], mask_str[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &d_addr, dest_str, sizeof(dest_str));
+            inet_ntop(AF_INET, &g_addr, gw_str, sizeof(gw_str));
+            inet_ntop(AF_INET, &m_addr, mask_str, sizeof(mask_str));
+
+            // Build flags string
+            std::string flag_str;
+            if (fl & RTF_UP) flag_str += "U";
+            if (fl & RTF_GATEWAY) flag_str += "G";
+            if (fl & RTF_HOST) flag_str += "H";
+
+            printf("%-16s %-16s %-16s %-6s %s\n", dest_str, gw_str, mask_str, flag_str.c_str(), ifn);
+
+            // Advance to next line
+            line = strchr(line, '\n');
+            if (!line) break;
+            line++;
+        }
+    }
+
     // Simple HTTP GET request using sockets
     std::string httpGet(const std::string& url, const std::string& path) {
         // Parse full URL: http://host:port/path
@@ -1604,6 +2048,38 @@ private:
     }
 
 public:
+    // Normalize a path: resolve . and .. and merge base + relative
+    static std::string normalizePath(const std::string& base, const std::string& path) {
+        if (path.empty()) return base;
+
+        std::string raw;
+        if (path[0] == '/') {
+            raw = path;
+        } else {
+            raw = base + "/" + path;
+        }
+
+        // Split on '/', resolve . and ..
+        std::vector<std::string> parts;
+        std::istringstream iss(raw);
+        std::string token;
+        while (std::getline(iss, token, '/')) {
+            if (token == "." || token.empty()) continue;
+            if (token == "..") {
+                if (!parts.empty()) parts.pop_back();
+            } else {
+                parts.push_back(token);
+            }
+        }
+
+        if (parts.empty()) return "/";
+        std::string result;
+        for (const auto& p : parts) {
+            result += "/" + p;
+        }
+        return result;
+    }
+
     KekeShell() : current_dir("/mnt"), current_text_color(Colors::WHITE), current_bg_color(""), cursor_style(1), history_count(0), history_index(-1) {
         command_history.reserve(HISTORY_SIZE);
     }
@@ -1691,7 +2167,7 @@ public:
 
                 // Built-in commands from kernel.c
                 if (strcmp_custom(cmd.c_str(), "help") == 0) {
-                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, cp, mv, chmod, find, grep, kpm, net, gui, color, cursor, origin, windows, keke_info, keketool, jobs, fg, bg");
+                    printInfo("Prikazy: help, cls, ver, calc, time, exit, reboot, cd, ls, mkdir, rm, touch, cat, cp, mv, chmod, find, grep, kpm, net, ifconfig, route, gui, color, cursor, origin, windows, keke_info, keketool, jobs, fg, bg");
                 }
                 else if (strcmp_custom(cmd.c_str(), "ver") == 0) {
                     std::cout << Colors::CYAN << "--------------------------------------------\n";
@@ -1800,6 +2276,12 @@ public:
                 }
                 else if (strcmp_custom(cmd.c_str(), "net") == 0) {
                     cmdNet(arg);
+                }
+                else if (strcmp_custom(cmd.c_str(), "ifconfig") == 0) {
+                    cmdIfconfig(arg);
+                }
+                else if (strcmp_custom(cmd.c_str(), "route") == 0) {
+                    cmdRoute(arg);
                 }
                 else if (strcmp_custom(cmd.c_str(), "gui") == 0) {
                     cmdGui();
@@ -2000,6 +2482,22 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] Could not mount sysfs — interface enumeration will fail" << Colors::RESET << "\n";
     }
 
+    // Mount procfs so /proc/net/route and other proc files are accessible
+    mkdir("/proc", 0755);
+    if (mount("proc", "/proc", "proc", 0, nullptr) == 0) {
+        std::cout << Colors::GREEN << "[OK] Mounted procfs on /proc" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] Could not mount procfs" << Colors::RESET << "\n";
+    }
+
+    // Mount tmpfs on /tmp for temporary files
+    mkdir("/tmp", 0755);
+    if (mount("tmpfs", "/tmp", "tmpfs", 0, nullptr) == 0) {
+        std::cout << Colors::GREEN << "[OK] Mounted tmpfs on /tmp" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] Could not mount tmpfs on /tmp" << Colors::RESET << "\n";
+    }
+
     // Load PS/2 mouse module
     if (loadKernelModule("/lib/modules/psmouse.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] Loaded psmouse module (mouse support)" << Colors::RESET << "\n";
@@ -2021,9 +2519,8 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] e1000.ko not found - network interface won't be available" << Colors::RESET << "\n";
     }
 
-    // Setup networking by enumerating interfaces dynamically
+    // Setup networking: enumerate interfaces, bring up, then DHCP
     // Reads /sys/class/net/ to find interfaces, skips loopback
-    // Configures first non-loopback interface with static IP (QEMU: 10.0.2.15)
     int net_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (net_sock >= 0) {
         DIR *netdir = opendir("/sys/class/net");
@@ -2041,7 +2538,7 @@ int main() {
                 struct stat ifstat;
                 if (stat(ifpath, &ifstat) != 0 || !S_ISDIR(ifstat.st_mode)) continue;
 
-                // Found a real interface — bring it up and configure it
+                // Found a real interface — bring it up then run DHCP
                 std::cout << Colors::CYAN << "[NET] Found interface: " << entry->d_name << Colors::RESET << "\n";
 
                 struct ifreq ifr;
@@ -2061,41 +2558,55 @@ int main() {
                     continue;
                 }
 
-                // Assign static IP 10.0.2.15/24 (QEMU user-mode networking)
-                struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
-                addr->sin_family = AF_INET;
-                addr->sin_addr.s_addr = inet_addr("10.0.2.15");
-                if (ioctl(net_sock, SIOCSIFADDR, &ifr) < 0) {
-                    std::cout << Colors::YELLOW << "[WARNING] Could not set IP for " << entry->d_name << Colors::RESET << "\n";
-                    continue;
+                // Run DHCP client
+                DhcpResult dhcp = dhcpDiscover(entry->d_name);
+                if (dhcp.success) {
+                    // Set IP address
+                    struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+                    addr->sin_family = AF_INET;
+                    addr->sin_addr.s_addr = inet_addr(dhcp.ip);
+                    ioctl(net_sock, SIOCSIFADDR, &ifr);
+
+                    // Set subnet mask
+                    addr->sin_addr.s_addr = inet_addr(dhcp.mask);
+                    ioctl(net_sock, SIOCSIFNETMASK, &ifr);
+
+                    // Set default route via gateway
+                    struct rtentry rt;
+                    memset(&rt, 0, sizeof(rt));
+                    struct sockaddr_in *rt_dest = (struct sockaddr_in *)&rt.rt_dst;
+                    rt_dest->sin_family = AF_INET;
+                    rt_dest->sin_addr.s_addr = inet_addr("0.0.0.0");
+                    struct sockaddr_in *rt_gw = (struct sockaddr_in *)&rt.rt_gateway;
+                    rt_gw->sin_family = AF_INET;
+                    rt_gw->sin_addr.s_addr = inet_addr(dhcp.gateway);
+                    struct sockaddr_in *rt_genmask = (struct sockaddr_in *)&rt.rt_genmask;
+                    rt_genmask->sin_family = AF_INET;
+                    rt_genmask->sin_addr.s_addr = inet_addr("0.0.0.0");
+                    rt.rt_flags = RTF_UP | RTF_GATEWAY;
+                    if (ioctl(net_sock, SIOCADDRT, &rt) < 0) {
+                        std::cout << Colors::YELLOW << "[WARNING] Could not set default route" << Colors::RESET << "\n";
+                    } else {
+                        std::cout << Colors::GREEN << "[OK] Default route via " << dhcp.gateway << Colors::RESET << "\n";
+                    }
+
+                    // Write /etc/resolv.conf with DNS from DHCP
+                    mkdir("/etc", 0755);
+                    int resolv_fd = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (resolv_fd >= 0) {
+                        std::string dns_line = "nameserver " + std::string(dhcp.dns) + "\n";
+                        write(resolv_fd, dns_line.c_str(), dns_line.length());
+                        close(resolv_fd);
+                        std::cout << Colors::GREEN << "[OK] DNS configured (" << dhcp.dns << ")" << Colors::RESET << "\n";
+                    }
+
+                    std::cout << Colors::GREEN << "[OK] Network configured via DHCP: " << entry->d_name << "=" << dhcp.ip
+                              << " lease=" << dhcp.lease_seconds << "s" << Colors::RESET << "\n";
+                    network_ok = true;
+                    break;
+                } else {
+                    std::cout << Colors::YELLOW << "[WARNING] DHCP failed on " << entry->d_name << " — no IP assigned" << Colors::RESET << "\n";
                 }
-
-                // Set subnet mask 255.255.255.0
-                addr->sin_addr.s_addr = inet_addr("255.255.255.0");
-                 ioctl(net_sock, SIOCSIFNETMASK, &ifr);
-
-                 // Setup default route via 10.0.2.2 (QEMU NAT gateway)
-                 struct rtentry rt;
-                 memset(&rt, 0, sizeof(rt));
-                 struct sockaddr_in *rt_dest = (struct sockaddr_in *)&rt.rt_dst;
-                 rt_dest->sin_family = AF_INET;
-                 rt_dest->sin_addr.s_addr = inet_addr("0.0.0.0");
-                 struct sockaddr_in *rt_gw = (struct sockaddr_in *)&rt.rt_gateway;
-                 rt_gw->sin_family = AF_INET;
-                 rt_gw->sin_addr.s_addr = inet_addr("10.0.2.2");
-                 struct sockaddr_in *rt_genmask = (struct sockaddr_in *)&rt.rt_genmask;
-                 rt_genmask->sin_family = AF_INET;
-                 rt_genmask->sin_addr.s_addr = inet_addr("0.0.0.0");
-                 rt.rt_flags = RTF_UP | RTF_GATEWAY;
-                 if (ioctl(net_sock, SIOCADDRT, &rt) < 0) {
-                     // Route setup failed — may still work if QEMU handles routing
-                 } else {
-                     std::cout << Colors::GREEN << "[OK] Default route via 10.0.2.2" << Colors::RESET << "\n";
-                 }
-
-                std::cout << Colors::GREEN << "[OK] Network configured: " << entry->d_name << "=10.0.2.15" << Colors::RESET << "\n";
-                network_ok = true;
-                break;  // Configure first real interface only for now
             }
             closedir(netdir);
             if (!network_ok) {
@@ -2105,16 +2616,6 @@ int main() {
             std::cout << Colors::YELLOW << "[WARNING] Could not enumerate /sys/class/net/ (kernel may not support it)" << Colors::RESET << "\n";
         }
         close(net_sock);
-
-        // Setup DNS resolver (QEMU user-mode DNS = 10.0.2.3)
-        mkdir("/etc", 0755);
-        int resolv_fd = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (resolv_fd >= 0) {
-            const char *dns = "nameserver 10.0.2.3\n";
-            write(resolv_fd, dns, strlen(dns));
-            close(resolv_fd);
-            std::cout << Colors::GREEN << "[OK] DNS configured (10.0.2.3)" << Colors::RESET << "\n";
-        }
     }
 
     // Mount disk partition to /mnt for file system access
