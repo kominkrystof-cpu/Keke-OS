@@ -7,6 +7,7 @@
 - **Dynamic interface enumeration**: reads `/sys/class/net/` at boot instead of hardcoding `eth0` (fails when kernel assigns different name like `enp0s3`)
 - **Proper interface detection**: skips `lo`, filters non-directory entries
 - **Per-interface setup**: bring up IP, netmask, default route, and DNS for whichever interface exists
+- **e1000 network driver**: copies `e1000.ko` into initramfs and loads it before network setup so QEMU's e1000 NIC is recognized
 
 ## v2.7.8 — Shell Tooling + Networking + KPM (2026-07-27)
 
