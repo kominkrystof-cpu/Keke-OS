@@ -42,17 +42,17 @@ set default=0
 
 menuentry "Keke OS v2.7.5" {
     set gfxpayload=keep
-    linux /boot/vmlinuz quiet loglevel=0
+    linux /boot/vmlinuz loglevel=3
     initrd /boot/keke-initramfs.cpio.gz
 }
 
 menuentry "Keke OS - Safe Mode (No Framebuffer)" {
-    linux /boot/vmlinuz nomodeset text
+    linux /boot/vmlinuz nomodeset text loglevel=3
     initrd /boot/keke-initramfs.cpio.gz
 }
 
 menuentry "Keke OS - Debug Mode" {
-    linux /boot/vmlinuz earlyprintk debug ignore_loglevel
+    linux /boot/vmlinuz earlyprintk debug ignore_loglevel loglevel=1
     initrd /boot/keke-initramfs.cpio.gz
 }
 GRUB_EOF

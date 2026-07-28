@@ -2519,6 +2519,13 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] e1000.ko not found - network interface won't be available" << Colors::RESET << "\n";
     }
 
+    // Load e1000e network driver for real Intel hardware (X240, X380, etc.)
+    if (loadKernelModule("/lib/modules/e1000e.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] e1000e network driver loaded (real Intel NIC)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] e1000e.ko not found - real hardware NIC may not work" << Colors::RESET << "\n";
+    }
+
     // Setup networking: enumerate interfaces, bring up, then DHCP
     // Reads /sys/class/net/ to find interfaces, skips loopback
     int net_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -2618,26 +2625,91 @@ int main() {
         close(net_sock);
     }
 
-    // Mount disk partition to /mnt for file system access
-    
-    // Disk is partitioned — try /dev/sda1 first, then /dev/sda as fallback
-    const char* mount_targets[] = {"/dev/sda1", "/dev/sda"};
-    bool mounted = false;
-    for (int t = 0; t < 2 && !mounted; t++) {
-        if (mount(mount_targets[t], "/mnt", "ext4", 0, nullptr) == 0) {
-            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (ext4)" << Colors::RESET << "\n";
-            mounted = true;
-        } else if (mount(mount_targets[t], "/mnt", "vfat", 0, nullptr) == 0) {
-            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (vfat)" << Colors::RESET << "\n";
-            mounted = true;
-        } else if (mount(mount_targets[t], "/mnt", nullptr, 0, nullptr) == 0) {
-            std::cout << Colors::GREEN << "[OK] Mounted " << mount_targets[t] << " to /mnt (auto-detect)" << Colors::RESET << "\n";
-            mounted = true;
+    // Auto-mount disk partitions to /mnt — scan /proc/partitions for all block devices
+    // Prefers partition with label "keke-os", falls back to first ext4 partition
+    // Override: kernel boot parameter kekedisk=/dev/sda6
+    mkdir("/mnt", 0755);
+    {
+        // Helper: read ext4 volume label from a block device
+        auto readExt4Label = [](const std::string& dev) -> std::string {
+            int fd = open(dev.c_str(), O_RDONLY);
+            if (fd < 0) return "";
+            char sb[1024];
+            // ext4 superblock is at offset 1024 (0x400)
+            lseek(fd, 0x400, SEEK_SET);
+            ssize_t n = read(fd, sb, sizeof(sb));
+            close(fd);
+            if (n < 1128) return "";  // not enough data
+            // Volume name is at offset 0x468 relative to device start = offset 0x68 in superblock
+            char label[17] = {};
+            memcpy(label, sb + 0x68, 16);
+            // Trim trailing spaces
+            for (int i = 15; i >= 0; i--) {
+                if (label[i] == ' ') label[i] = '\0';
+                else if (label[i]) break;
+            }
+            return std::string(label);
+        };
+
+        std::vector<std::string> devices;
+        std::string keke_dev;
+        int parts_fd = open("/proc/partitions", O_RDONLY);
+        if (parts_fd >= 0) {
+            char buf[4096];
+            ssize_t n = read(parts_fd, buf, sizeof(buf) - 1);
+            close(parts_fd);
+            if (n > 0) {
+                buf[n] = '\0';
+                std::istringstream iss(buf);
+                std::string line;
+                while (std::getline(iss, line)) {
+                    if (line.find("major") != std::string::npos) continue;
+                    if (line.empty()) continue;
+                    char dev_name[64] = {};
+                    if (sscanf(line.c_str(), "%*d %*d %*d %63s", dev_name) == 1) {
+                        std::string name(dev_name);
+                        if (!name.empty() && isdigit(name.back())) {
+                            std::string full = "/dev/" + name;
+                            devices.push_back(full);
+                            std::string label = readExt4Label(full);
+                            if (label == "keke-os") {
+                                keke_dev = full;
+                            }
+                        }
+                    }
+                }
+            }
         }
-    }
-    if (!mounted) {
-        std::cout << Colors::RED << "[WARNING] Failed to mount any disk partition to /mnt" << Colors::RESET << "\n";
-        std::cout << Colors::YELLOW << "File system may not be available." << Colors::RESET << "\n";
+
+        // Mount, preferring keke-os labeled partition
+        const char* fs_types[] = {"ext4", "ntfs3", "vfat", nullptr};
+        std::vector<std::string> mount_order;
+        if (!keke_dev.empty()) {
+            mount_order.push_back(keke_dev);
+            std::cout << Colors::CYAN << "[DISK] Found partition labeled 'keke-os': " << keke_dev << Colors::RESET << "\n";
+        }
+        for (const auto& d : devices) {
+            if (d != keke_dev) mount_order.push_back(d);
+        }
+
+        bool mounted = false;
+        for (const auto& dev : mount_order) {
+            if (mounted) break;
+            for (int f = 0; fs_types[f] != nullptr && !mounted; f++) {
+                if (mount(dev.c_str(), "/mnt", fs_types[f], 0, nullptr) == 0) {
+                    std::cout << Colors::GREEN << "[OK] Mounted " << dev << " to /mnt (" << fs_types[f] << ")" << Colors::RESET << "\n";
+                    mounted = true;
+                }
+            }
+            if (!mounted && mount(dev.c_str(), "/mnt", nullptr, 0, nullptr) == 0) {
+                std::cout << Colors::GREEN << "[OK] Mounted " << dev << " to /mnt (auto)" << Colors::RESET << "\n";
+                mounted = true;
+            }
+        }
+        if (!mounted) {
+            std::cout << Colors::YELLOW << "[WARNING] No disk partition mounted to /mnt" << Colors::RESET << "\n";
+            std::cout << Colors::YELLOW << "         Use 'ls /dev/sd*' and 'mount <dev> /mnt' manually" << Colors::RESET << "\n";
+        }
     }
     
     KekeShell shell;

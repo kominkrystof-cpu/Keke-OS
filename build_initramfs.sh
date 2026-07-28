@@ -116,7 +116,23 @@ else
         cp "$E1000_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/e1000.ko"
         echo "[Keke OS] Copied e1000.ko"
     else
-        echo "[Keke OS] Warning: e1000.ko not found, network will not work"
+        echo "[Keke OS] Warning: e1000.ko not found, QEMU network will not work"
+    fi
+fi
+
+# Copy e1000e network driver module for real Intel hardware (X240, X380, etc.)
+echo "[Keke OS] Copying e1000e network driver module (real Intel NIC)..."
+E1000E_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko.zst"
+if [ -f "$E1000E_MODULE_SRC" ]; then
+    zstd -d "$E1000E_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/e1000e.ko" -f 2>/dev/null
+    echo "[Keke OS] Copied e1000e.ko (from .zst)"
+else
+    E1000E_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko"
+    if [ -f "$E1000E_MODULE_SRC" ]; then
+        cp "$E1000E_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/e1000e.ko"
+        echo "[Keke OS] Copied e1000e.ko"
+    else
+        echo "[Keke OS] Warning: e1000e.ko not found, real hardware NIC will not work"
     fi
 fi
 
