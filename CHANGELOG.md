@@ -1,12 +1,16 @@
 # Changelog
 
-## v2.8.1 — KPM HTTP URL Parsing Fix (2026-07-28)
+## v2.8.1 — KPM Fixes (2026-07-28)
 
 ### Networking
 - **httpGet URL parsing**: strips `http://` prefix, extracts hostname/IP, port, and path from full URLs
 - **Numeric IP detection**: uses `inet_pton()` to check if host is already a numeric IP — skips DNS resolution entirely, avoiding "Could not resolve hostname" errors for IP addresses
 - **Port extraction**: uses port from URL (e.g., `:8000`) instead of hardcoded port 80
 - **Simplified cmdNet**: passes raw URL to httpGet instead of manual substring parsing
+
+### KPM
+- **Strip HTTP headers**: `kpm update` and `kpm list` now strip HTTP response headers before parsing JSON
+- **Fixed description parsing**: `kpm list` now uses `find("\"description\"")` to locate the value instead of fragile character counting
 
 ## v2.8.0 — Network Boot Fix (2026-07-28)
 

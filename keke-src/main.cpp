@@ -852,15 +852,22 @@ private:
 
         if (strcmp_custom(kpm_cmd.c_str(), "list") == 0) {
             std::cout << Colors::YELLOW << "Načítám seznam balíků z " << repo_url << "/packages.json...\n" << Colors::RESET;
-            std::string json = httpGet(repo_url, "/packages.json");
-            if (json.find("ERROR") == 0) {
-                std::cout << Colors::RED << "Chyba při stažení seznamu: " << json << Colors::RESET << "\n";
+            std::string raw = httpGet(repo_url, "/packages.json");
+            if (raw.find("ERROR") == 0) {
+                std::cout << Colors::RED << "Chyba při stažení seznamu: " << raw << Colors::RESET << "\n";
                 return;
+            }
+            // Strip HTTP headers: everything after first \r\n\r\n is the body
+            std::string json = raw;
+            size_t hdr_end = raw.find("\r\n\r\n");
+            if (hdr_end != std::string::npos) {
+                json = raw.substr(hdr_end + 4);
             }
             // Simple JSON parsing: extract "name": "description" pairs
             std::cout << Colors::CYAN << "Dostupné balíky:\n" << Colors::RESET;
             size_t pos = 0;
             while ((pos = json.find("\"name\"", pos)) != std::string::npos) {
+                // Move past "name" and find opening quote of value
                 pos += 6;
                 while (pos < json.length() && json[pos] != '"') pos++;
                 if (pos >= json.length()) break;
@@ -868,18 +875,22 @@ private:
                 size_t name_start = pos;
                 while (pos < json.length() && json[pos] != '"') pos++;
                 std::string name = json.substr(name_start, pos - name_start);
+                pos++; // skip closing " of name
 
-                pos += 2; // skip ",
+                // Find "description" key
+                size_t desc_key = json.find("\"description\"", pos);
+                if (desc_key == std::string::npos) break;
+                // Move past "description" and find opening quote of value
+                pos = desc_key + 13; // length of "description"
                 while (pos < json.length() && json[pos] != '"') pos++;
                 if (pos >= json.length()) break;
                 pos++;
-                while (pos < json.length() && json[pos] != '"') pos++;
-                if (pos < json.length()) pos++;
                 size_t desc_start = pos;
                 while (pos < json.length() && json[pos] != '"') pos++;
                 std::string desc = json.substr(desc_start, pos - desc_start);
 
                 std::cout << "  " << name << "  - " << desc << "\n";
+                pos++;
             }
             std::cout << Colors::RESET;
         }
@@ -924,10 +935,16 @@ private:
         }
         else if (strcmp_custom(kpm_cmd.c_str(), "update") == 0) {
             std::cout << Colors::YELLOW << "Aktualizuji seznam balíků z " << repo_url << "...\n" << Colors::RESET;
-            std::string json = httpGet(repo_url, "/packages.json");
-            if (json.find("ERROR") == 0) {
-                std::cout << Colors::RED << "Chyba při aktualizaci: " << json << Colors::RESET << "\n";
+            std::string raw = httpGet(repo_url, "/packages.json");
+            if (raw.find("ERROR") == 0) {
+                std::cout << Colors::RED << "Chyba při aktualizaci: " << raw << Colors::RESET << "\n";
                 return;
+            }
+            // Strip HTTP headers
+            std::string json = raw;
+            size_t hdr_end = raw.find("\r\n\r\n");
+            if (hdr_end != std::string::npos) {
+                json = raw.substr(hdr_end + 4);
             }
             // Count packages in JSON
             int count = 0;
