@@ -1,9 +1,10 @@
 # Changelog
 
-## v2.7.9 — Network Boot Fix (2026-07-28)
+## v2.8.0 — Network Boot Fix (2026-07-28)
 
-### Networking
-- **Dynamic interface enumeration**: reads `/sys/class/net/` at boot to find the real network interface name instead of hardcoding `eth0` (which fails when the kernel assigns a different name like `enp0s3`)
+### Boot
+- **Mount sysfs at init**: so `/sys/class/net/` is populated and interface enumeration works
+- **Dynamic interface enumeration**: reads `/sys/class/net/` at boot instead of hardcoding `eth0` (fails when kernel assigns different name like `enp0s3`)
 - **Proper interface detection**: skips `lo`, filters non-directory entries
 - **Per-interface setup**: bring up IP, netmask, default route, and DNS for whichever interface exists
 
