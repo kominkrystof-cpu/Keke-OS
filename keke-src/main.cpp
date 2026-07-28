@@ -19,6 +19,8 @@
 #include <netdb.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <net/if.h>
+#include <net/route.h>
 #include <linux/fb.h>
 #include <errno.h>
 #include <sys/syscall.h>
@@ -1934,9 +1936,71 @@ int main() {
     } else {
         std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko not found - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
     }
-    
+
+    // Setup networking (QEMU user-mode: eth0 = 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3)
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) {
+        // Bring up eth0
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        strncpy(ifr.ifr_name, "eth0", IFNAMSIZ - 1);
+        if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+            ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+            if (ioctl(sock, SIOCSIFFLAGS, &ifr) == 0) {
+                // Assign static IP 10.0.2.15/24
+                struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+                addr->sin_family = AF_INET;
+                addr->sin_addr.s_addr = inet_addr("10.0.2.15");
+                ioctl(sock, SIOCSIFADDR, &ifr);
+
+                // Set subnet mask 255.255.255.0
+                addr->sin_addr.s_addr = inet_addr("255.255.255.0");
+                ioctl(sock, SIOCSIFNETMASK, &ifr);
+
+                std::cout << Colors::GREEN << "[OK] Network configured: eth0=10.0.2.15" << Colors::RESET << "\n";
+            } else {
+                std::cout << Colors::YELLOW << "[WARNING] Failed to bring up eth0" << Colors::RESET << "\n";
+            }
+        } else {
+            std::cout << Colors::YELLOW << "[WARNING] eth0 not found (no network in QEMU?)" << Colors::RESET << "\n";
+        }
+
+        // Setup default route via 10.0.2.2
+        int rt_sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (rt_sock >= 0) {
+            struct rtentry rt;
+            memset(&rt, 0, sizeof(rt));
+            struct sockaddr_in *rt_dest = (struct sockaddr_in *)&rt.rt_dst;
+            rt_dest->sin_family = AF_INET;
+            rt_dest->sin_addr.s_addr = inet_addr("0.0.0.0");
+            struct sockaddr_in *rt_gw = (struct sockaddr_in *)&rt.rt_gateway;
+            rt_gw->sin_family = AF_INET;
+            rt_gw->sin_addr.s_addr = inet_addr("10.0.2.2");
+            struct sockaddr_in *rt_genmask = (struct sockaddr_in *)&rt.rt_genmask;
+            rt_genmask->sin_family = AF_INET;
+            rt_genmask->sin_addr.s_addr = inet_addr("0.0.0.0");
+            rt.rt_flags = RTF_UP | RTF_GATEWAY;
+            if (ioctl(rt_sock, SIOCADDRT, &rt) < 0) {
+                std::cout << Colors::YELLOW << "[WARNING] Could not set default route (may work without it)" << Colors::RESET << "\n";
+            } else {
+                std::cout << Colors::GREEN << "[OK] Default route via 10.0.2.2" << Colors::RESET << "\n";
+            }
+            close(rt_sock);
+        }
+        close(sock);
+
+        // Setup DNS resolver (QEMU user-mode DNS = 10.0.2.3)
+        mkdir("/etc", 0755);
+        int resolv_fd = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (resolv_fd >= 0) {
+            const char *dns = "nameserver 10.0.2.3\n";
+            write(resolv_fd, dns, strlen(dns));
+            close(resolv_fd);
+            std::cout << Colors::GREEN << "[OK] DNS configured (10.0.2.3)" << Colors::RESET << "\n";
+        }
+    }
+
     // Mount disk partition to /mnt for file system access
-    mkdir("/mnt", 0755);
     
     // Disk is partitioned — try /dev/sda1 first, then /dev/sda as fallback
     const char* mount_targets[] = {"/dev/sda1", "/dev/sda"};
