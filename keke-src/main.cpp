@@ -720,55 +720,92 @@ private:
     }
     
     // Simple HTTP GET request using sockets
-    std::string httpGet(const std::string& host, const std::string& path) {
+    std::string httpGet(const std::string& url, const std::string& path) {
+        // Parse full URL: http://host:port/path
+        std::string full_url = url;
+        if (full_url.find("http://") == 0) {
+            full_url = full_url.substr(7);
+        } else if (full_url.find("https://") == 0) {
+            return "ERROR: HTTPS not supported, use http:// URL";
+        }
+
+        // If path is provided separately, use it; otherwise extract from URL
+        std::string request_path = path;
+        if (request_path.empty() || request_path == "/") {
+            size_t path_pos = full_url.find('/');
+            if (path_pos != std::string::npos) {
+                request_path = full_url.substr(path_pos);
+                full_url = full_url.substr(0, path_pos);
+            }
+        }
+
+        // Extract port from host:port
+        std::string host = full_url;
+        int port = 80;
+        size_t colon_pos = host.find(':');
+        if (colon_pos != std::string::npos) {
+            port = std::stoi(host.substr(colon_pos + 1));
+            host = host.substr(0, colon_pos);
+        }
+
         struct sockaddr_in server_addr;
         struct hostent* server;
         int sockfd;
         char buffer[4096];
         std::string response;
-        
+
         // Create socket
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
         if (sockfd < 0) {
             return "ERROR: Could not create socket";
         }
-        
-        // Resolve hostname
-        server = gethostbyname(host.c_str());
-        if (server == nullptr) {
-            close(sockfd);
-            return "ERROR: Could not resolve hostname";
+
+        // Check if host is already a numeric IP address
+        struct in_addr addr;
+        bool is_numeric_ip = (inet_pton(AF_INET, host.c_str(), &addr) == 1);
+
+        // Resolve hostname (skip DNS if it's already a numeric IP)
+        if (!is_numeric_ip) {
+            server = gethostbyname(host.c_str());
+            if (server == nullptr) {
+                close(sockfd);
+                return "ERROR: Could not resolve hostname";
+            }
         }
-        
+
         // Set up server address
         memset(&server_addr, 0, sizeof(server_addr));
         server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(80);
-        memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
-        
+        server_addr.sin_port = htons(port);
+        if (is_numeric_ip) {
+            memcpy(&server_addr.sin_addr.s_addr, &addr.s_addr, sizeof(addr.s_addr));
+        } else {
+            memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+        }
+
         // Connect to server
         if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
             close(sockfd);
             return "ERROR: Could not connect to server";
         }
-        
+
         // Send HTTP GET request
-        std::string request = "GET " + path + " HTTP/1.1\r\n";
+        std::string request = "GET " + request_path + " HTTP/1.1\r\n";
         request += "Host: " + host + "\r\n";
         request += "Connection: close\r\n\r\n";
-        
+
         if (send(sockfd, request.c_str(), request.length(), 0) < 0) {
             close(sockfd);
             return "ERROR: Could not send request";
         }
-        
+
         // Receive response
         int bytes_received;
         while ((bytes_received = recv(sockfd, buffer, sizeof(buffer) - 1, 0)) > 0) {
             buffer[bytes_received] = '\0';
             response += buffer;
         }
-        
+
         close(sockfd);
         return response;
     }
@@ -915,23 +952,7 @@ private:
             return;
         }
 
-        // Parse URL: http://host/path
-        std::string url = arg;
-        if (url.find("http://") == 0) {
-            url = url.substr(7);
-        } else if (url.find("https://") == 0) {
-            std::cout << Colors::RED << "HTTPS not supported yet, use http:// URL\n" << Colors::RESET;
-            return;
-        }
-
-        size_t path_pos = url.find('/');
-        std::string host = (path_pos == std::string::npos) ? url : url.substr(0, path_pos);
-        std::string path = (path_pos == std::string::npos) ? "/" : url.substr(path_pos);
-
-        std::cout << Colors::YELLOW << "GET http://" << host << path << "\n" << Colors::RESET;
-
-        std::string response = httpGet(host, path);
-
+        std::string response = httpGet(arg, "");
         if (response.find("ERROR") == 0) {
             std::cout << Colors::RED << response << Colors::RESET << "\n";
             return;
