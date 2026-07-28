@@ -1923,6 +1923,14 @@ int main() {
         }
     }
 
+    // Mount sysfs so /sys/class/net/ is populated with real interface names
+    mkdir("/sys", 0755);
+    if (mount("sysfs", "/sys", "sysfs", 0, nullptr) == 0) {
+        std::cout << Colors::GREEN << "[OK] Mounted sysfs on /sys" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] Could not mount sysfs — interface enumeration will fail" << Colors::RESET << "\n";
+    }
+
     // Load PS/2 mouse module
     if (loadKernelModule("/lib/modules/psmouse.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] Loaded psmouse module (mouse support)" << Colors::RESET << "\n";
