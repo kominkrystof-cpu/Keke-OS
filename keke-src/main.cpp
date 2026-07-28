@@ -14,6 +14,7 @@
 #include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -760,6 +761,12 @@ private:
             return "ERROR: Could not create socket";
         }
 
+        // Set recv timeout so recv() doesn't hang forever
+        struct timeval tv;
+        tv.tv_sec = 5;
+        tv.tv_usec = 0;
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
         // Check if host is already a numeric IP address
         struct in_addr addr;
         bool is_numeric_ip = (inet_pton(AF_INET, host.c_str(), &addr) == 1);
@@ -783,11 +790,35 @@ private:
             memcpy(&server_addr.sin_addr.s_addr, server->h_addr, server->h_length);
         }
 
-        // Connect to server
-        if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        // Non-blocking connect with 5-second timeout
+        int flags = fcntl(sockfd, F_GETFL, 0);
+        fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+        int ret = connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr));
+        if (ret < 0 && errno != EINPROGRESS) {
             close(sockfd);
             return "ERROR: Could not connect to server";
         }
+        if (ret < 0) {
+            fd_set writefds;
+            FD_ZERO(&writefds);
+            FD_SET(sockfd, &writefds);
+            struct timeval ctv;
+            ctv.tv_sec = 5;
+            ctv.tv_usec = 0;
+            ret = select(sockfd + 1, nullptr, &writefds, nullptr, &ctv);
+            if (ret <= 0) {
+                close(sockfd);
+                return "ERROR: Connection timed out";
+            }
+            int err = 0;
+            socklen_t errlen = sizeof(err);
+            getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &err, &errlen);
+            if (err != 0) {
+                close(sockfd);
+                return "ERROR: Could not connect to server";
+            }
+        }
+        fcntl(sockfd, F_SETFL, flags);
 
         // Send HTTP GET request
         std::string request = "GET " + request_path + " HTTP/1.1\r\n";
