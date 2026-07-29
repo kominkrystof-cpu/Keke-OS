@@ -41,10 +41,14 @@ check_stale() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 1: Build init binary (always — cheap, ~2s, avoids stale-timestamp bugs)
+# Step 1: Build init binary (always — cheap, ~2s)
+#  rm before make: git doesn't reliably update mtimes on checkout/pull,
+#  so both check_stale and make's internal timestamp check can silently
+#  skip rebuilds. Deleting the artifact forces a fresh build.
 # ---------------------------------------------------------------------------
 echo ""
 echo "[Keke OS] === Step 1: Build init ==="
+rm -f "$BUILD_DIR/init"
 cd "$PROJECT_DIR/keke-src"
 make
 cd "$PROJECT_DIR"
