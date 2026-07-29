@@ -2582,7 +2582,23 @@ int main() {
                     continue;
                 }
 
-                sleep(2);  // wait for link auto-negotiation on real HW
+                // Wait for link (poll /sys/class/net/*/carrier, up to ~5s)
+                {
+                    char carrier_path[64];
+                    snprintf(carrier_path, sizeof(carrier_path), "/sys/class/net/%s/carrier", entry->d_name);
+                    for (int attempt = 0; attempt < 25; attempt++) {
+                        int cfd = open(carrier_path, O_RDONLY);
+                        if (cfd >= 0) {
+                            char val = 0;
+                            if (read(cfd, &val, 1) == 1 && val == '1') {
+                                close(cfd);
+                                break;
+                            }
+                            close(cfd);
+                        }
+                        usleep(200000);
+                    }
+                }
 
                 // Run DHCP client
                 DhcpResult dhcp = dhcpDiscover(entry->d_name);
