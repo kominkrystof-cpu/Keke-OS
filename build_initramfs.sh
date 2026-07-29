@@ -150,9 +150,10 @@ copy_module "drivers/net/ethernet/intel/e1000/e1000" "e1000.ko" "optional"
 copy_module "drivers/net/ethernet/intel/e1000e/e1000e" "e1000e.ko" "optional"
 
 # SATA/AHCI storage stack — needed to detect disk on real hardware
-copy_module "drivers/ata/libata" "libata.ko"
+# libata and sd_mod are often built into the kernel (=y), no .ko exists
+copy_module "drivers/ata/libata" "libata.ko" "optional"
 copy_module "drivers/ata/ahci" "ahci.ko"
-copy_module "drivers/scsi/sd_mod" "sd_mod.ko"
+copy_module "drivers/scsi/sd_mod" "sd_mod.ko" "optional"
 
 # Post-build validation: verify required modules landed
 echo ""

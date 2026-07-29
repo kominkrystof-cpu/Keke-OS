@@ -12,6 +12,7 @@
 
 ### Real Hardware Compatibility
 - **Storage stack**: loads `libata.ko` → `ahci.ko` → `sd_mod.ko` at boot so SATA SSDs are detected on real machines
+- **Built-in driver detection**: `loadOrBuiltIn` helper treats EEXIST (errno=17) as success — modules built into the kernel (`=y`) don't trigger false warnings; `libata.ko` and `sd_mod.ko` marked optional in build script since they're commonly built-in
 - **DHCP carrier polling**: polls `/sys/class/net/<iface>/carrier` in 200ms intervals (up to 5s) instead of a blind `sleep(2)` — adapts to fast and slow link negotiation
 - **Module error visibility**: failed `loadKernelModule()` calls now print `errno` — `ENOENT(2)` = file missing, `ENOEXEC(8)` = kernel version mismatch, `EEXIST(17)` = already built-in
 

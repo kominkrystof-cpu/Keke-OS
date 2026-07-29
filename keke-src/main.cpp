@@ -2527,18 +2527,32 @@ int main() {
     }
 
     // Load SATA/AHCI storage stack — needed to detect disk partitions
-    if (loadKernelModule("/lib/modules/libata.ko") == 0) {
+    // EEXIST means the driver is built into the kernel (=y), which is fine
+    auto loadOrBuiltIn = [](const char* path) {
+        if (loadKernelModule(path) == 0) return 2;
+        return (errno == EEXIST) ? 1 : 0;
+    };
+    int libata_ret = loadOrBuiltIn("/lib/modules/libata.ko");
+    if (libata_ret == 2) {
         std::cout << Colors::GREEN << "[OK] libata loaded (ATA transport)" << Colors::RESET << "\n";
+    } else if (libata_ret == 1) {
+        std::cout << Colors::GREEN << "[OK] libata already built into kernel" << Colors::RESET << "\n";
     } else {
         std::cout << Colors::YELLOW << "[WARNING] libata.ko failed (errno=" << errno << ") - disk may not be detected" << Colors::RESET << "\n";
     }
-    if (loadKernelModule("/lib/modules/ahci.ko") == 0) {
+    int ahci_ret = loadOrBuiltIn("/lib/modules/ahci.ko");
+    if (ahci_ret == 2) {
         std::cout << Colors::GREEN << "[OK] ahci loaded (SATA controller)" << Colors::RESET << "\n";
+    } else if (ahci_ret == 1) {
+        std::cout << Colors::GREEN << "[OK] ahci already built into kernel" << Colors::RESET << "\n";
     } else {
         std::cout << Colors::YELLOW << "[WARNING] ahci.ko failed (errno=" << errno << ") - SATA disk may not be detected" << Colors::RESET << "\n";
     }
-    if (loadKernelModule("/lib/modules/sd_mod.ko") == 0) {
+    int sd_mod_ret = loadOrBuiltIn("/lib/modules/sd_mod.ko");
+    if (sd_mod_ret == 2) {
         std::cout << Colors::GREEN << "[OK] sd_mod loaded (SCSI disk)" << Colors::RESET << "\n";
+    } else if (sd_mod_ret == 1) {
+        std::cout << Colors::GREEN << "[OK] sd_mod already built into kernel" << Colors::RESET << "\n";
     } else {
         std::cout << Colors::YELLOW << "[WARNING] sd_mod.ko failed (errno=" << errno << ") - disk block device may not appear" << Colors::RESET << "\n";
     }
