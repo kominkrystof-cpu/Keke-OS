@@ -2526,6 +2526,23 @@ int main() {
         std::cout << Colors::YELLOW << "[WARNING] e1000e.ko failed (errno=" << errno << ") - real hardware NIC may not work" << Colors::RESET << "\n";
     }
 
+    // Load SATA/AHCI storage stack — needed to detect disk partitions
+    if (loadKernelModule("/lib/modules/libata.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] libata loaded (ATA transport)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] libata.ko failed (errno=" << errno << ") - disk may not be detected" << Colors::RESET << "\n";
+    }
+    if (loadKernelModule("/lib/modules/ahci.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] ahci loaded (SATA controller)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] ahci.ko failed (errno=" << errno << ") - SATA disk may not be detected" << Colors::RESET << "\n";
+    }
+    if (loadKernelModule("/lib/modules/sd_mod.ko") == 0) {
+        std::cout << Colors::GREEN << "[OK] sd_mod loaded (SCSI disk)" << Colors::RESET << "\n";
+    } else {
+        std::cout << Colors::YELLOW << "[WARNING] sd_mod.ko failed (errno=" << errno << ") - disk block device may not appear" << Colors::RESET << "\n";
+    }
+
     // Setup networking: enumerate interfaces, bring up, then DHCP
     // Reads /sys/class/net/ to find interfaces, skips loopback
     int net_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -2564,6 +2581,8 @@ int main() {
                     std::cout << Colors::YELLOW << "[WARNING] Failed to bring up " << entry->d_name << Colors::RESET << "\n";
                     continue;
                 }
+
+                sleep(2);  // wait for link auto-negotiation on real HW
 
                 // Run DHCP client
                 DhcpResult dhcp = dhcpDiscover(entry->d_name);

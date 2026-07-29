@@ -149,6 +149,11 @@ copy_module "drivers/net/ethernet/intel/e1000/e1000" "e1000.ko" "optional"
 # e1000e — real Intel NICs (I218-LM in X240, etc.)
 copy_module "drivers/net/ethernet/intel/e1000e/e1000e" "e1000e.ko" "optional"
 
+# SATA/AHCI storage stack — needed to detect disk on real hardware
+copy_module "drivers/ata/libata" "libata.ko"
+copy_module "drivers/ata/ahci" "ahci.ko"
+copy_module "drivers/scsi/sd_mod" "sd_mod.ko"
+
 # Post-build validation: verify required modules landed
 echo ""
 MISSING=0
