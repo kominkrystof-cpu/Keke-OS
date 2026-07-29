@@ -76,18 +76,49 @@ mkdir -p "$MOUNT_POINT/bin"
 mkdir -p "$MOUNT_POINT/scripts"
 mkdir -p "$MOUNT_POINT/lib"
 
+# Staleness check helper
+check_stale() {
+    local output="$1"
+    shift
+    if [ ! -f "$output" ]; then echo "  MISSING"; return 1; fi
+    local out_mtime=$(stat -c %Y "$output" 2>/dev/null || echo 0)
+    for src in "$@"; do
+        [ ! -f "$src" ] && continue
+        local src_mtime=$(stat -c %Y "$src" 2>/dev/null || echo 0)
+        if [ "$src_mtime" -gt "$out_mtime" ]; then echo "  STALE vs $src"; return 1; fi
+    done
+    return 0
+}
+
 # Copy kernel and initramfs
 echo "[Keke OS] Copying kernel and initramfs..."
+STALE=0
 if [ -f "$BUILD_DIR/vmlinuz" ]; then
-    cp "$BUILD_DIR/vmlinuz" "$MOUNT_POINT/boot/"
+    if check_stale "$BUILD_DIR/vmlinuz" "$PROJECT_DIR/keke-src/main.cpp" >/dev/null; then
+        cp "$BUILD_DIR/vmlinuz" "$MOUNT_POINT/boot/"
+    else
+        echo "[Keke OS] Warning: vmlinuz may be stale — deploy anyway?"
+        cp "$BUILD_DIR/vmlinuz" "$MOUNT_POINT/boot/"
+        STALE=1
+    fi
 else
     echo "[Keke OS] Warning: vmlinuz not found in build/"
 fi
 
 if [ -f "$BUILD_DIR/keke-initramfs.cpio.gz" ]; then
-    cp "$BUILD_DIR/keke-initramfs.cpio.gz" "$MOUNT_POINT/boot/"
+    if check_stale "$BUILD_DIR/keke-initramfs.cpio.gz" "$BUILD_DIR/init" "$PROJECT_DIR/build_initramfs.sh" "$PROJECT_DIR/keke-src/main.cpp" >/dev/null; then
+        cp "$BUILD_DIR/keke-initramfs.cpio.gz" "$MOUNT_POINT/boot/"
+    else
+        echo "[Keke OS] Warning: keke-initramfs.cpio.gz may be stale — deploy anyway?"
+        cp "$BUILD_DIR/keke-initramfs.cpio.gz" "$MOUNT_POINT/boot/"
+        STALE=1
+    fi
 else
     echo "[Keke OS] Warning: keke-initramfs.cpio.gz not found in build/"
+fi
+
+if [ "$STALE" -eq 1 ]; then
+    echo "[Keke OS] Warning: Some artifacts were stale — consider rebuilding before testing"
 fi
 
 # Copy C programs to /mnt/bin

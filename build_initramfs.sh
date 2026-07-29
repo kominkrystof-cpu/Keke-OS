@@ -8,6 +8,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
 INITRAMFS_DIR="initramfs_temp"
 OUTPUT="build/keke-initramfs.cpio.gz"
+OUTPUT_TMP="build/keke-initramfs.cpio.gz.tmp"
 KERNEL_VER="$(uname -r)"
 
 echo "[Keke OS] Building custom initramfs..."
@@ -20,8 +21,9 @@ if ! command -v zstd &>/dev/null; then
     exit 1
 fi
 
-# Clean up any existing temp directory
+# Clean up any existing temp directory AND stale outputs
 rm -rf "$INITRAMFS_DIR"
+rm -f "$OUTPUT" "$OUTPUT_TMP"
 
 # Create initramfs directory structure
 mkdir -p "$INITRAMFS_DIR"
@@ -55,8 +57,7 @@ copy_module() {
     local dest="$INITRAMFS_DIR/lib/modules/$destname"
 
     if [ -f "$zst_src" ]; then
-        zstd -d "$zst_src" -o "$dest" -f 2>/dev/null
-        if [ $? -eq 0 ] && [ -f "$dest" ]; then
+        if zstd -d "$zst_src" -o "$dest" -f 2>/dev/null && [ -f "$dest" ]; then
             echo "[Keke OS] Copied $destname (from .zst)"
             REQUIRED_MODULES+=("$destname")
             return 0
@@ -135,7 +136,7 @@ copy_module "drivers/input/mouse/psmouse" "psmouse.ko" "optional"
 copy_module "drivers/net/ethernet/intel/e1000/e1000" "e1000.ko" "optional"
 
 # e1000e — real Intel NICs (I218-LM in X240, etc.)
-copy_module "drivers/net/ethernet/intel/e1000e/e1000e" "e1000e.ko"
+copy_module "drivers/net/ethernet/intel/e1000e/e1000e" "e1000e.ko" "optional"
 
 # Post-build validation: verify required modules landed
 echo ""
@@ -153,14 +154,17 @@ if [ "$MISSING" -eq 1 ]; then
     exit 1
 fi
 
-# Create the initramfs archive
+# Create the initramfs archive to temp path (atomic: only mv on success)
 echo "[Keke OS] Creating initramfs archive..."
 cd "$INITRAMFS_DIR"
-find . | cpio -o -H newc | gzip > "../$OUTPUT"
+find . | cpio -o -H newc | gzip > "../$OUTPUT_TMP"
 cd ..
 
 # Cleanup
 rm -rf "$INITRAMFS_DIR"
+
+# Atomically replace output (any prior stale file is gone, this one is complete)
+mv "$OUTPUT_TMP" "$OUTPUT"
 
 echo "[Keke OS] Initramfs created: $OUTPUT"
 echo "[Keke OS] Size: $(ls -lh "$OUTPUT" | awk '{print $5}')"

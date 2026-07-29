@@ -33,7 +33,6 @@ static int loadKernelModule(const char* path) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return -1;
     
-    // finit_module(fd, params, flags) — flags=0 means strict version check
     int ret = syscall(SYS_finit_module, fd, "", 0);
     int saved_errno = errno;
     close(fd);
@@ -2502,28 +2501,28 @@ int main() {
     if (loadKernelModule("/lib/modules/psmouse.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] Loaded psmouse module (mouse support)" << Colors::RESET << "\n";
     } else {
-        std::cout << Colors::YELLOW << "[WARNING] Failed to load psmouse.ko - mouse may not work" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "[WARNING] Failed to load psmouse.ko (errno=" << errno << ") - mouse may not work" << Colors::RESET << "\n";
     }
 
     // Load Keke OS custom kernel module (/dev/kekeos)
     if (loadKernelModule("/lib/modules/kekeos-mod.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] Keke OS module loaded (/dev/kekeos)" << Colors::RESET << "\n";
     } else {
-        std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko not found - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "[WARNING] kekeos-mod.ko failed (errno=" << errno << ") - Keke syscalls via /dev/kekeos unavailable" << Colors::RESET << "\n";
     }
 
     // Load e1000 network driver for QEMU user-mode networking (device e1000)
     if (loadKernelModule("/lib/modules/e1000.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] e1000 network driver loaded" << Colors::RESET << "\n";
     } else {
-        std::cout << Colors::YELLOW << "[WARNING] e1000.ko not found - network interface won't be available" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "[WARNING] e1000.ko failed (errno=" << errno << ") - network interface won't be available" << Colors::RESET << "\n";
     }
 
     // Load e1000e network driver for real Intel hardware (X240, X380, etc.)
     if (loadKernelModule("/lib/modules/e1000e.ko") == 0) {
         std::cout << Colors::GREEN << "[OK] e1000e network driver loaded (real Intel NIC)" << Colors::RESET << "\n";
     } else {
-        std::cout << Colors::YELLOW << "[WARNING] e1000e.ko not found - real hardware NIC may not work" << Colors::RESET << "\n";
+        std::cout << Colors::YELLOW << "[WARNING] e1000e.ko failed (errno=" << errno << ") - real hardware NIC may not work" << Colors::RESET << "\n";
     }
 
     // Setup networking: enumerate interfaces, bring up, then DHCP
@@ -2660,6 +2659,7 @@ int main() {
             close(parts_fd);
             if (n > 0) {
                 buf[n] = '\0';
+                std::cout << Colors::CYAN << "[PROBE] /proc/partitions contents:\n" << buf << Colors::RESET << "\n";
                 std::istringstream iss(buf);
                 std::string line;
                 while (std::getline(iss, line)) {
@@ -2672,13 +2672,19 @@ int main() {
                             std::string full = "/dev/" + name;
                             devices.push_back(full);
                             std::string label = readExt4Label(full);
+                            std::cout << Colors::CYAN << "[PROBE] " << full << " label='"
+                                      << label << "'" << Colors::RESET << "\n";
                             if (label == "keke-os") {
                                 keke_dev = full;
                             }
                         }
                     }
                 }
+            } else {
+                std::cout << Colors::YELLOW << "[WARNING] /proc/partitions is empty" << Colors::RESET << "\n";
             }
+        } else {
+            std::cout << Colors::YELLOW << "[WARNING] Could not open /proc/partitions (errno=" << errno << ")" << Colors::RESET << "\n";
         }
 
         // Mount, preferring keke-os labeled partition
