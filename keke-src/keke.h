@@ -1,6 +1,8 @@
 #ifndef _UAPI_LINUX_KEKE_H
 #define _UAPI_LINUX_KEKE_H
 
+#define KEKE_VERSION_STR "2.8.0"
+
 #define KEKE_CMD_GET_VERSION   0
 #define KEKE_CMD_GET_BOOT_TIME 1
 #define KEKE_CMD_HELLO         2

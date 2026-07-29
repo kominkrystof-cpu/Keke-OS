@@ -26,6 +26,7 @@
 #include <linux/fb.h>
 #include <errno.h>
 #include <sys/syscall.h>
+#include "keke.h"
 
 // Load a kernel module directly via finit_module() syscall
 // This works without modprobe/insmod — just a raw syscall
@@ -659,7 +660,7 @@ private:
     }
     
     void printHeader() {
-        std::cout << Colors::CYAN << "Keke OS Terminal [Verze 2.7.5 - Multi-Language Build]\n";
+        std::cout << Colors::CYAN << "Keke OS Terminal [Verze " << KEKE_VERSION_STR << " - Multi-Language Build]\n";
         std::cout << "Copyright (c) 2026 Keke Corporation. Vsechna prava vyzrazena.\n";
         std::cout << "Licence: KekeOS Personal Edition - Aktivovano pro ThinkPad X380.\n";
         std::cout << "Languages: C++ | C | Python | JavaScript | Purr++ | Shell\n";
@@ -670,7 +671,7 @@ private:
         std::cout << Colors::BRIGHT_MAGENTA << Colors::BOLD;
         std::cout << "╔════════════════════════════════════════════════╗\n";
         std::cout << "║           " << Colors::BRIGHT_YELLOW << "[ SECURE BOOT ACTIVATED ]" << Colors::BRIGHT_MAGENTA << "           ║\n";
-        std::cout << "║       " << Colors::BRIGHT_CYAN << "KekeOS Security System v2.7.5" << Colors::BRIGHT_MAGENTA << "          ║\n";
+        std::cout << "║       " << Colors::BRIGHT_CYAN << "KekeOS Security System v" << KEKE_VERSION_STR << Colors::BRIGHT_MAGENTA << "          ║\n";
         std::cout << "╚════════════════════════════════════════════════╝\n";
         std::cout << Colors::RESET << "\n";
     }
@@ -2170,7 +2171,7 @@ public:
                 }
                 else if (strcmp_custom(cmd.c_str(), "ver") == 0) {
                     std::cout << Colors::CYAN << "--------------------------------------------\n";
-                    std::cout << "Keke Operating System [v2.7.5 - Stable Update]\n";
+                    std::cout << "Keke Operating System [v" << KEKE_VERSION_STR << " - Stable Update]\n";
                     std::cout << "Build Date: Sunday, July 6, 2026\n";
                     std::cout << "Target HW: Intel UHD / Lenovo X380 Yoga\n";
                     std::cout << "Kernel: Custom Linux + Keke syscalls (x86_64)\n";

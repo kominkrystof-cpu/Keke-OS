@@ -11,11 +11,11 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Keke OS");
 MODULE_DESCRIPTION("Keke OS custom character device - immediate kernel interface");
-MODULE_VERSION("2.7.5");
+MODULE_VERSION("2.8.0");
 
 #define KEKE_VERSION_MAJOR 2
-#define KEKE_VERSION_MINOR 7
-#define KEKE_VERSION_PATCH 5
+#define KEKE_VERSION_MINOR 8
+#define KEKE_VERSION_PATCH 0
 #define KEKE_CODENAME "MSYS"
 
 static unsigned long boot_time_sec;

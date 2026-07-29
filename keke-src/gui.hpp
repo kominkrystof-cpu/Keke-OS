@@ -400,7 +400,7 @@ public:
 
         // Bottom "Start" bar
         fillRect(x + 2, y + h - 22, w - 4, 20, 60, 115, 190);
-        drawString(x + 10, y + h - 18, "Keke OS v2.7.5", 255, 255, 255);
+        drawString(x + 10, y + h - 18, "Keke OS v" KEKE_VERSION_STR, 255, 255, 255);
     }
 
     // Desktop icon
@@ -994,7 +994,7 @@ private:
             int client_h = win->rect.h - GuiTheme::TITLE_HEIGHT - GuiTheme::BORDER * 2 - 4;
 
             if (win->title == "Terminal - Keke Shell") {
-                g->drawString(client_x + 5, client_y + 5, "Keke OS v2.7.5", 0, 255, 0);
+                g->drawString(client_x + 5, client_y + 5, "Keke OS v" KEKE_VERSION_STR, 0, 255, 0);
                 g->drawString(client_x + 5, client_y + 18, "keke@os ~$ ", 0, 255, 0);
                 g->drawString(client_x + 5, client_y + 35, "Welcome to Keke Terminal!", 180, 180, 180);
                 g->drawString(client_x + 5, client_y + 52, "Type 'help' for commands.", 180, 180, 180);
