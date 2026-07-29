@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/mount.h>
+#include <sys/utsname.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/wait.h>
@@ -29,8 +30,19 @@
 #include "keke.h"
 
 // Load a kernel module directly via finit_module() syscall
-// This works without modprobe/insmod — just a raw syscall
+// Prints file stats to distinguish: missing vs empty vs genuine vermagic mismatch
 static int loadKernelModule(const char* path) {
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        std::cout << "[FILE] " << path << " — stat failed (errno=" << errno << ")" << "\n";
+        return -1;
+    }
+    if (st.st_size == 0) {
+        std::cout << "[FILE] " << path << " — empty file!" << "\n";
+        return -1;
+    }
+    std::cout << "[FILE] " << path << " — " << st.st_size << " bytes\n";
+
     int fd = open(path, O_RDONLY);
     if (fd < 0) return -1;
     
@@ -2496,6 +2508,16 @@ int main() {
         std::cout << Colors::GREEN << "[OK] Mounted tmpfs on /tmp" << Colors::RESET << "\n";
     } else {
         std::cout << Colors::YELLOW << "[WARNING] Could not mount tmpfs on /tmp" << Colors::RESET << "\n";
+    }
+
+    // Show kernel version — useful for diagnosing module mismatch (errno=8)
+    {
+        struct utsname buf;
+        if (uname(&buf) == 0) {
+            std::cout << "[KERNEL] " << buf.sysname << " " << buf.release << " " << buf.version << "\n";
+        } else {
+            std::cout << Colors::YELLOW << "[WARNING] uname() failed — can't show kernel version" << Colors::RESET << "\n";
+        }
     }
 
     // Load PS/2 mouse module

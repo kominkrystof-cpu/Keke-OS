@@ -41,18 +41,13 @@ check_stale() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 1: Build init binary if source has changed
+# Step 1: Build init binary (always — cheap, ~2s, avoids stale-timestamp bugs)
 # ---------------------------------------------------------------------------
 echo ""
 echo "[Keke OS] === Step 1: Build init ==="
-if check_stale "$BUILD_DIR/init" "$PROJECT_DIR/keke-src/main.cpp"; then
-    echo "[Keke OS] init is up to date"
-else
-    echo "[Keke OS] Rebuilding init..."
-    cd "$PROJECT_DIR/keke-src"
-    make
-    cd "$PROJECT_DIR"
-fi
+cd "$PROJECT_DIR/keke-src"
+make
+cd "$PROJECT_DIR"
 
 # ---------------------------------------------------------------------------
 # Step 2: Build initramfs (also copies matching host kernel to build/vmlinuz)
