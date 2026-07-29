@@ -28,7 +28,13 @@ Keke OS is a **Linux-based OS** with a custom init (`/init`) written in C++ that
 ```
 GRUB → Linux kernel → initramfs → /init (main.cpp)
                                     │
-                                    ├─ Load kernel modules (bochs, psmouse, kekeos)
+                                    ├─ Mount devtmpfs + sysfs + proc + tmpfs
+                                    ├─ Load kernel modules
+                                    │     ├─ psmouse.ko         (PS/2 mouse)
+                                    │     ├─ e1000e.ko          (Intel NIC)
+                                    │     ├─ libata.ko → ahci.ko → sd_mod.ko  (SATA disk)
+                                    │     └─ e1000.ko / bochs.ko (QEMU only)
+                                    ├─ Poll NIC carrier, run DHCP
                                     ├─ Mount disk to /mnt
                                     ├─ Launch Keke Shell (built-in)
                                     │     ├─ Built-in commands (cd, ls, cat, calc, time...)
@@ -129,6 +135,7 @@ qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -enable-kvm -cpu 
 ├── build_all.sh                # Legacy build script
 ├── build_initramfs.sh          # Builds initramfs (needs root)
 ├── copy_kernel.sh              # Copies host kernel (needs root)
+├── deploy.sh                   # Build + deploy to real HW partition (needs root)
 ├── setup_disk.sh               # Creates disk image (needs root)
 ├── make_iso.sh                 # Creates bootable ISO
 ├── grub.cfg                    # GRUB boot configuration
@@ -213,6 +220,55 @@ qemu-system-x86_64 -drive file=keke-disk.img,format=raw -m 512 -enable-kvm -cpu 
 | `exit` | Exit to login |
 
 ---
+
+## Booting on Real Hardware
+
+Keke OS can boot on real x86-64 hardware (tested on Lenovo ThinkPad X240/X380).
+
+### Prerequisites (on the target machine)
+
+The target machine needs a Linux install to build from, with a spare ext4 partition labeled `keke-os`:
+
+```bash
+# From the host OS (e.g., Zorin, Ubuntu)
+sudo mkfs.ext4 /dev/sdX6 -L keke-os          # create partition with label
+```
+
+### Build & Deploy
+
+```bash
+# 1. Clone
+git clone https://github.com/kominkrystof-cpu/Keke-OS
+cd Keke-OS
+
+# 2. Build C++ init
+cd keke-src && make && cd ..
+
+# 3. Build initramfs + deploy to partition
+sudo ./deploy.sh /dev/sdX6
+
+# 4. Install GRUB (one-time)
+sudo mount /dev/sdX6 /mnt
+sudo grub-install --target=x86_64-efi --efi-directory=/boot/efi \
+                  --boot-directory=/mnt/boot --removable
+# or for BIOS:
+sudo grub-install --target=i386-pc --boot-directory=/mnt/boot /dev/sdX
+
+# 5. Reboot, select "Keke OS" from GRUB menu
+sudo reboot
+```
+
+> `deploy.sh` handles the full workflow: copies the matching host kernel, builds the initramfs with required modules (NIC, SATA/AHCI, mouse), deploys to the target partition, and verifies with `cmp`. It refuses to copy stale artifacts — rebuild if it complains.
+
+### Troubleshooting
+
+| Symptom | Likely Cause |
+|---------|--------------|
+| `errno=8` on module load | Kernel/module version mismatch — `deploy.sh` auto-copies matching kernel |
+| `errno=2` on module load | Module not found in host `/lib/modules/` — check `build_initramfs.sh` module list |
+| `[PROBE]` shows empty `/proc/partitions` | SATA/AHCI driver missing — ensure `libata.ko`, `ahci.ko`, `sd_mod.ko` are copied |
+| DHCPDISCOVER sent but no IP | Link negotiation not complete — init polls `/sys/class/net/*/carrier` up to 5s |
+| `[WARNING] e1000e.ko failed` | NIC driver may be built into kernel (check `errno=17` vs `errno=2`) |
 
 ## License
 

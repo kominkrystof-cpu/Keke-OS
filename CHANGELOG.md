@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.8.2 — Real Hardware Bringup (2026-07-29)
+
+### Build System Hardening
+- **Atomic initramfs artifact**: `build_initramfs.sh` now writes to `.tmp` then `mv` into place — a failed build leaves zero output files instead of a stale one being silently deployed
+- **`deploy.sh` (new)**: full build+deploy workflow with `check_stale()` — refuses to copy artifacts older than their source inputs; `cmp` verification after copy
+- **`setup_disk.sh`**: added same `check_stale()` helper with deploy-time staleness warnings
+- **`build_initramfs.sh` copies matching kernel**: automatically copies `/boot/vmlinuz-$(uname -r)` to `build/vmlinuz` at the start, so the deployed kernel and modules always come from the same package
+- **zstd/`set -e` fix**: `zstd` decompression call wrapped in `if` so `set -e` kills the script for real errors but allows graceful fallback to `.ko` when `.ko.zst` is absent
+- **Module validation**: libata, ahci, sd_mod added to module list with post-build validation (build aborts if missing)
+
+### Real Hardware Compatibility
+- **Storage stack**: loads `libata.ko` → `ahci.ko` → `sd_mod.ko` at boot so SATA SSDs are detected on real machines
+- **DHCP carrier polling**: polls `/sys/class/net/<iface>/carrier` in 200ms intervals (up to 5s) instead of a blind `sleep(2)` — adapts to fast and slow link negotiation
+- **Module error visibility**: failed `loadKernelModule()` calls now print `errno` — `ENOENT(2)` = file missing, `ENOEXEC(8)` = kernel version mismatch, `EEXIST(17)` = already built-in
+
+### Debug Output
+- **Raw `/proc/partitions` dump**: init prints the full partition table before scanning
+- **Per-partition `[PROBE]`**: every block device shows its detected ext4 label (before any matching logic)
+- **Empty/unreadable `/proc/partitions`**: explicit `[WARNING]` with errno when the file is empty or unopenable
+
+### Version
+- **Bumped to 2.8.0**: `KEKE_VERSION_STR` defined once in `keke.h`, referenced by `main.cpp` (3 spots) and `gui.hpp` (2 spots); kernel module `MODULE_VERSION` and `KEKE_VERSION_*` macros updated to match
+- **GRUB config**: uses `search --label keke-os` instead of hardcoded `(hd0,msdos1)` — survives partition renumbering; reduced to 2 entries (Full + Debug)
+
 ## v2.8.1 — KPM Fixes (2026-07-28)
 
 ### Networking
