@@ -2639,7 +2639,7 @@ int main() {
             lseek(fd, 0x400, SEEK_SET);
             ssize_t n = read(fd, sb, sizeof(sb));
             close(fd);
-            if (n < 1128) return "";  // not enough data
+            if (n < 120) return "";  // need at least 0x68+16 bytes from superblock for label
             // Volume name is at offset 0x468 relative to device start = offset 0x68 in superblock
             char label[17] = {};
             memcpy(label, sb + 0x68, 16);

@@ -8,8 +8,17 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$PROJECT_DIR/build"
 INITRAMFS_DIR="initramfs_temp"
 OUTPUT="build/keke-initramfs.cpio.gz"
+KERNEL_VER="$(uname -r)"
 
 echo "[Keke OS] Building custom initramfs..."
+echo "[Keke OS] Kernel version: $KERNEL_VER"
+
+# Check required tools
+if ! command -v zstd &>/dev/null; then
+    echo "[Keke OS] Error: zstd is required but not installed."
+    echo "[Keke OS] Install it: sudo apt install zstd"
+    exit 1
+fi
 
 # Clean up any existing temp directory
 rm -rf "$INITRAMFS_DIR"
@@ -27,6 +36,49 @@ mkdir -p "$INITRAMFS_DIR/lib"
 mkdir -p "$INITRAMFS_DIR/usr/bin"
 mkdir -p "$INITRAMFS_DIR/usr/lib"
 mkdir -p "$INITRAMFS_DIR/usr/share"
+
+# List of required modules that must be present after build
+REQUIRED_MODULES=()
+
+# Copy a kernel module into the initramfs
+# Usage: copy_module <kernel-module-path> <dest-name> [is-optional]
+#   kernel-module-path: relative path under /lib/modules/$(uname -r)/kernel/
+#                       e.g. "drivers/net/ethernet/intel/e1000e/e1000e"
+#   dest-name:          filename in initramfs (e.g. "e1000e.ko")
+#   is-optional:        if "optional", failure is a warning, not an error
+copy_module() {
+    local relpath="$1"
+    local destname="$2"
+    local optional="${3:-required}"
+    local zst_src="/lib/modules/$KERNEL_VER/kernel/${relpath}.ko.zst"
+    local ko_src="/lib/modules/$KERNEL_VER/kernel/${relpath}.ko"
+    local dest="$INITRAMFS_DIR/lib/modules/$destname"
+
+    if [ -f "$zst_src" ]; then
+        zstd -d "$zst_src" -o "$dest" -f 2>/dev/null
+        if [ $? -eq 0 ] && [ -f "$dest" ]; then
+            echo "[Keke OS] Copied $destname (from .zst)"
+            REQUIRED_MODULES+=("$destname")
+            return 0
+        else
+            echo "[Keke OS] Warning: zstd decompression failed for $zst_src"
+        fi
+    fi
+
+    if [ -f "$ko_src" ]; then
+        cp "$ko_src" "$dest"
+        echo "[Keke OS] Copied $destname"
+        REQUIRED_MODULES+=("$destname")
+        return 0
+    fi
+
+    if [ "$optional" = "optional" ]; then
+        echo "[Keke OS] Warning: $destname not found (optional)"
+    else
+        echo "[Keke OS] Warning: $destname not found — module won't be available"
+    fi
+    return 1
+}
 
 # Copy our C++ init program
 if [ -f "$BUILD_DIR/init" ]; then
@@ -66,74 +118,39 @@ fi
 # Copy kernel modules
 mkdir -p "$INITRAMFS_DIR/lib/modules"
 
-# Copy Keke OS kernel module
+# Copy Keke OS custom kernel module
 if [ -f "$BUILD_DIR/kekeos-mod.ko" ]; then
     echo "[Keke OS] Copying kekeos-mod.ko"
     cp "$BUILD_DIR/kekeos-mod.ko" "$INITRAMFS_DIR/lib/modules/kekeos-mod.ko"
+    REQUIRED_MODULES+=("kekeos-mod.ko")
 fi
 
-# Copy bochs DRM kernel module for QEMU VGA framebuffer
-echo "[Keke OS] Copying bochs kernel module..."
-BOCHS_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/gpu/drm/tiny/bochs.ko.zst"
-if [ -f "$BOCHS_MODULE_SRC" ]; then
-    zstd -d "$BOCHS_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/bochs.ko" -f 2>/dev/null
-    echo "[Keke OS] Copied bochs.ko (from .zst)"
-else
-    BOCHS_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/gpu/drm/tiny/bochs.ko"
-    if [ -f "$BOCHS_MODULE_SRC" ]; then
-        cp "$BOCHS_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/bochs.ko"
-        echo "[Keke OS] Copied bochs.ko"
-    else
-        echo "[Keke OS] Warning: bochs.ko not found, framebuffer may not work"
-    fi
-fi
+# QEMU framebuffer (optional — only needed in QEMU)
+copy_module "drivers/gpu/drm/tiny/bochs" "bochs.ko" "optional"
 
-# Copy psmouse module for PS/2 mouse support
-echo "[Keke OS] Copying psmouse kernel module..."
-PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko.zst"
-if [ -f "$PSMOUSE_MODULE_SRC" ]; then
-    zstd -d "$PSMOUSE_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/psmouse.ko" -f 2>/dev/null
-    echo "[Keke OS] Copied psmouse.ko (from .zst)"
-else
-    PSMOUSE_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/input/mouse/psmouse.ko"
-    if [ -f "$PSMOUSE_MODULE_SRC" ]; then
-        cp "$PSMOUSE_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/psmouse.ko"
-        echo "[Keke OS] Copied psmouse.ko"
-    else
-        echo "[Keke OS] Warning: psmouse.ko not found, mouse may not work"
-    fi
-fi
+# PS/2 mouse (optional — only needed for mouse support)
+copy_module "drivers/input/mouse/psmouse" "psmouse.ko" "optional"
 
-# Copy e1000 network driver module for QEMU user-mode networking
-echo "[Keke OS] Copying e1000 network driver module..."
-E1000_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko.zst"
-if [ -f "$E1000_MODULE_SRC" ]; then
-    zstd -d "$E1000_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/e1000.ko" -f 2>/dev/null
-    echo "[Keke OS] Copied e1000.ko (from .zst)"
-else
-    E1000_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000/e1000.ko"
-    if [ -f "$E1000_MODULE_SRC" ]; then
-        cp "$E1000_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/e1000.ko"
-        echo "[Keke OS] Copied e1000.ko"
-    else
-        echo "[Keke OS] Warning: e1000.ko not found, QEMU network will not work"
-    fi
-fi
+# e1000 — QEMU virtual NIC (optional)
+copy_module "drivers/net/ethernet/intel/e1000/e1000" "e1000.ko" "optional"
 
-# Copy e1000e network driver module for real Intel hardware (X240, X380, etc.)
-echo "[Keke OS] Copying e1000e network driver module (real Intel NIC)..."
-E1000E_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko.zst"
-if [ -f "$E1000E_MODULE_SRC" ]; then
-    zstd -d "$E1000E_MODULE_SRC" -o "$INITRAMFS_DIR/lib/modules/e1000e.ko" -f 2>/dev/null
-    echo "[Keke OS] Copied e1000e.ko (from .zst)"
-else
-    E1000E_MODULE_SRC="/lib/modules/$(uname -r)/kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko"
-    if [ -f "$E1000E_MODULE_SRC" ]; then
-        cp "$E1000E_MODULE_SRC" "$INITRAMFS_DIR/lib/modules/e1000e.ko"
-        echo "[Keke OS] Copied e1000e.ko"
-    else
-        echo "[Keke OS] Warning: e1000e.ko not found, real hardware NIC will not work"
+# e1000e — real Intel NICs (I218-LM in X240, etc.)
+copy_module "drivers/net/ethernet/intel/e1000e/e1000e" "e1000e.ko"
+
+# Post-build validation: verify required modules landed
+echo ""
+MISSING=0
+for mod in "${REQUIRED_MODULES[@]}"; do
+    if [ ! -f "$INITRAMFS_DIR/lib/modules/$mod" ]; then
+        echo "[Keke OS] VALIDATION FAILED: $mod missing from initramfs!"
+        MISSING=1
     fi
+done
+if [ "$MISSING" -eq 1 ]; then
+    echo "[Keke OS] Error: Required modules missing — aborting"
+    echo "[Keke OS] Check that the kernel module paths exist for kernel $KERNEL_VER"
+    rm -rf "$INITRAMFS_DIR"
+    exit 1
 fi
 
 # Create the initramfs archive
