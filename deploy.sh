@@ -55,19 +55,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2: Build initramfs if artifacts are stale
+# Step 2: Build initramfs (also copies matching host kernel to build/vmlinuz)
 # ---------------------------------------------------------------------------
 echo ""
 echo "[Keke OS] === Step 2: Build initramfs ==="
-if check_stale "$BUILD_DIR/keke-initramfs.cpio.gz" \
-       "$BUILD_DIR/init" \
-       "$PROJECT_DIR/build_initramfs.sh" \
-       "$PROJECT_DIR/keke-src/main.cpp"; then
-    echo "[Keke OS] initramfs is up to date"
-else
-    echo "[Keke OS] Rebuilding initramfs..."
-    sudo bash "$PROJECT_DIR/build_initramfs.sh"
-fi
+echo "[Keke OS] Rebuilding initramfs (also refreshes kernel from host)..."
+sudo bash "$PROJECT_DIR/build_initramfs.sh"
 
 # ---------------------------------------------------------------------------
 # Step 3: Deploy to partition
@@ -85,17 +78,7 @@ if [ ! -f "$BUILD_DIR/keke-initramfs.cpio.gz" ]; then
     exit 1
 fi
 
-# Staleness check before copy (vmlinuz is checked for existence only — it
-# comes from the host kernel or kernel build, not from main.cpp's Makefile)
-echo "[Keke OS] Checking initramfs freshness..."
-if ! check_stale "$BUILD_DIR/keke-initramfs.cpio.gz" "$BUILD_DIR/init" \
-       "$PROJECT_DIR/build_initramfs.sh" "$PROJECT_DIR/keke-src/main.cpp"; then
-    echo "[Keke OS] FATAL: initramfs is stale — rebuild first with Step 2."
-    echo "[Keke OS] Run: sudo bash $PROJECT_DIR/build_initramfs.sh"
-    exit 1
-fi
-
-echo "[Keke OS] All outputs look fresh. Proceeding..."
+echo "[Keke OS] All outputs present. Proceeding..."
 
 # Mount the target partition
 if mount | grep -q " $MOUNT "; then

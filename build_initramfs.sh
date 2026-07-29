@@ -14,6 +14,17 @@ KERNEL_VER="$(uname -r)"
 echo "[Keke OS] Building custom initramfs..."
 echo "[Keke OS] Kernel version: $KERNEL_VER"
 
+# Ensure matching kernel image is in build/ — copy from host kernel
+HOST_VMLINUZ="/boot/vmlinuz-$KERNEL_VER"
+if [ -f "$HOST_VMLINUZ" ]; then
+    echo "[Keke OS] Copying host kernel to build/vmlinuz (matching modules)..."
+    cp "$HOST_VMLINUZ" "$BUILD_DIR/vmlinuz"
+elif [ ! -f "$BUILD_DIR/vmlinuz" ]; then
+    echo "[Keke OS] Error: No host kernel at $HOST_VMLINUZ and no existing build/vmlinuz"
+    echo "[Keke OS] Run 'copy_kernel.sh' or build kernel first"
+    exit 1
+fi
+
 # Check required tools
 if ! command -v zstd &>/dev/null; then
     echo "[Keke OS] Error: zstd is required but not installed."
